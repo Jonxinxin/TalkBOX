@@ -2,6 +2,8 @@
 import sys
 import json
 import os
+import shutil
+import uuid
 from pathlib import Path
 from ctypes import windll
 
@@ -17,11 +19,12 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QMenu,
     QLabel,
-    QSizePolicy
+    QSizePolicy,
+    QFileDialog
 )
 
-from PySide6.QtGui import QGuiApplication, QAction, QIcon, QDrag
-from PySide6.QtCore import Qt, QTimer, QMimeData
+from PySide6.QtGui import QGuiApplication, QAction, QIcon, QDrag, QPixmap
+from PySide6.QtCore import Qt, QTimer, QMimeData, QUrl
 
 from qfluentwidgets import (
     SearchLineEdit,
@@ -39,9 +42,11 @@ from qfluentwidgets import (
 
 APP_DATA_DIR = Path(os.getenv("APPDATA", Path.home())) / "Talkbox"
 DATA_FILE = APP_DATA_DIR / "talk_data.json"
+IMAGE_DIR = APP_DATA_DIR / "images"
 LEGACY_DATA_FILE = Path("talk_data.json")
 APP_ICON_FILE = "app.ico"
 MAX_PINNED_TALKS = 5
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 
 def resourcePath(fileName):
@@ -156,6 +161,7 @@ class TalkRow(CardWidget):
         self.data = data
         self.parentWindow = parentWindow
         self.dragStartPosition = None
+        self.isImage = self.parentWindow.isImageTalk(self.data)
 
         self.setFixedHeight(56)
 
@@ -185,7 +191,37 @@ class TalkRow(CardWidget):
 
         layout.setSpacing(8)
 
-        self.fullText = data["content"].replace("\n", " ")
+        if self.isImage:
+            imagePath = self.parentWindow.imageFilePath(self.data)
+            self.fullText = f"图片 {imagePath.name}"
+
+            thumbnail = QLabel()
+            thumbnail.setFixedSize(36, 36)
+            thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            thumbnail.setStyleSheet("""
+                QLabel {
+                    background: #f1f5f9;
+                    border: 1px solid #d7e2ef;
+                    border-radius: 6px;
+                }
+            """)
+
+            pixmap = QPixmap(str(imagePath))
+
+            if pixmap.isNull():
+                thumbnail.setText("图")
+            else:
+                thumbnail.setPixmap(
+                    pixmap.scaled(
+                        34,
+                        34,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                )
+        else:
+            self.fullText = data["content"].replace("\n", " ")
+
         self.textLabel = BodyLabel()
         self.textLabel.setMinimumWidth(0)
         self.textLabel.setSizePolicy(
@@ -194,7 +230,7 @@ class TalkRow(CardWidget):
         )
 
         # 鼠标只悬停在文字上时显示完整话术
-        self.textLabel.setToolTip(self.data["content"])
+        self.textLabel.setToolTip(self.parentWindow.talkTooltip(self.data))
 
         editBtn = ToolButton(FIF.EDIT)
         copyBtn = ToolButton(FIF.COPY)
@@ -208,6 +244,9 @@ class TalkRow(CardWidget):
         # 双击整行直接复制
         self.mouseDoubleClickEvent = self.doubleCopy
 
+
+        if self.isImage:
+            layout.addWidget(thumbnail)
 
         layout.addWidget(self.textLabel, 1)
         layout.addWidget(editBtn)
@@ -277,7 +316,22 @@ class TalkRow(CardWidget):
     def startTextDrag(self):
 
         mimeData = QMimeData()
-        mimeData.setText(self.data["content"])
+
+        if self.isImage:
+            imagePath = self.parentWindow.imageFilePath(self.data)
+
+            if not imagePath.exists():
+                self.parentWindow.showWarning("图片不存在", "这张图片文件已经丢失")
+                return
+
+            mimeData.setUrls([QUrl.fromLocalFile(str(imagePath))])
+
+            pixmap = QPixmap(str(imagePath))
+
+            if not pixmap.isNull():
+                mimeData.setImageData(pixmap.toImage())
+        else:
+            mimeData.setText(self.data["content"])
 
         drag = QDrag(self)
         drag.setMimeData(mimeData)
@@ -316,11 +370,36 @@ class TalkRow(CardWidget):
 
     def copyTalk(self):
 
+        if self.isImage:
+            self.copyImageTalk()
+            return
+
         QApplication.clipboard().setText(self.data["content"])
 
         InfoBar.success(
             title='复制成功',
             content='话术已复制到剪贴板',
+            orient=Qt.Horizontal,
+            isClosable=False,
+            position=InfoBarPosition.BOTTOM,
+            duration=1500,
+            parent=self.parentWindow
+        )
+
+    def copyImageTalk(self):
+
+        imagePath = self.parentWindow.imageFilePath(self.data)
+        pixmap = QPixmap(str(imagePath))
+
+        if pixmap.isNull():
+            self.parentWindow.showWarning("图片不存在", "这张图片文件已经丢失")
+            return
+
+        QApplication.clipboard().setPixmap(pixmap)
+
+        InfoBar.success(
+            title='复制成功',
+            content='图片已复制到剪贴板',
             orient=Qt.Horizontal,
             isClosable=False,
             position=InfoBarPosition.BOTTOM,
@@ -334,6 +413,10 @@ class TalkRow(CardWidget):
         self.copyTalk()
 
     def editTalk(self):
+
+        if self.isImage:
+            self.parentWindow.replaceImageTalk(self.data)
+            return
 
         dialog = EditDialog(
             self,
@@ -396,6 +479,11 @@ class HomePage(QWidget):
         addBtn = ToolButton(FIF.ADD)
         addBtn.clicked.connect(self.addTalk)
 
+        imageBtn = ToolButton(FIF.PHOTO)
+        imageBtn.setFixedSize(32, 32)
+        imageBtn.setToolTip("添加图片")
+        imageBtn.clicked.connect(self.addImageTalk)
+
         self.pinBtn = ToolButton(FIF.PIN)
         self.pinBtn.setCheckable(True)
         self.pinBtn.clicked.connect(self.toggleTopMost)
@@ -403,6 +491,7 @@ class HomePage(QWidget):
 
         topLayout.addWidget(self.search)
         topLayout.addWidget(addBtn)
+        topLayout.addWidget(imageBtn)
         topLayout.addWidget(self.pinBtn)
 
         root.addWidget(topBar)
@@ -547,6 +636,62 @@ class HomePage(QWidget):
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=4)
 
+    def isImageTalk(self, talk):
+
+        return talk.get("type") == "image"
+
+    def imageFilePath(self, talk):
+
+        image = talk.get("image", "")
+        path = Path(image)
+
+        if path.is_absolute():
+            return path
+
+        return APP_DATA_DIR / path
+
+    def talkTooltip(self, talk):
+
+        if self.isImageTalk(talk):
+            return str(self.imageFilePath(talk))
+
+        return talk.get("content", "")
+
+    def talkSearchText(self, talk):
+
+        if self.isImageTalk(talk):
+            return f"图片 {self.imageFilePath(talk).name}"
+
+        return talk.get("content", "")
+
+    def copyImageToLibrary(self, sourcePath):
+
+        source = Path(sourcePath)
+
+        if source.suffix.lower() not in IMAGE_EXTENSIONS:
+            self.showWarning("格式不支持", "请选择常见图片格式")
+            return None
+
+        IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+        targetName = f"{uuid.uuid4().hex}{source.suffix.lower()}"
+        target = IMAGE_DIR / targetName
+
+        shutil.copy2(source, target)
+
+        return Path("images") / targetName
+
+    def selectImageFile(self):
+
+        filePath, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择图片",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
+        )
+
+        return filePath
+
     def addTalk(self):
 
         dialog = EditDialog(self)
@@ -565,6 +710,61 @@ class HomePage(QWidget):
             self.refreshRows()
 
             self.showTip("新增成功", "话术已添加")
+
+    def addImageTalk(self):
+
+        filePath = self.selectImageFile()
+
+        if not filePath:
+            return
+
+        imagePath = self.copyImageToLibrary(filePath)
+
+        if not imagePath:
+            return
+
+        self.data.append({
+            "type": "image",
+            "image": imagePath.as_posix()
+        })
+
+        self.saveData()
+        self.refreshRows()
+
+        self.showTip("新增成功", "图片已添加")
+
+    def replaceImageTalk(self, talk):
+
+        filePath = self.selectImageFile()
+
+        if not filePath:
+            return
+
+        oldImagePath = self.imageFilePath(talk)
+        imagePath = self.copyImageToLibrary(filePath)
+
+        if not imagePath:
+            return
+
+        talk["type"] = "image"
+        talk["image"] = imagePath.as_posix()
+
+        self.removeImageFile(oldImagePath)
+
+        self.saveData()
+        self.refreshRows()
+
+        self.showTip("替换成功", "图片已更新")
+
+    def removeImageFile(self, imagePath):
+
+        try:
+            imagePath = Path(imagePath)
+
+            if imagePath.exists() and imagePath.parent == IMAGE_DIR:
+                imagePath.unlink()
+        except:
+            pass
 
     def findTalkIndex(self, target):
 
@@ -644,7 +844,10 @@ class HomePage(QWidget):
         if result != QMessageBox.StandardButton.Yes:
             return
 
-        self.data.pop(index)
+        talk = self.data.pop(index)
+
+        if self.isImageTalk(talk):
+            self.removeImageFile(self.imageFilePath(talk))
 
         self.saveData()
         self.refreshRows()
@@ -666,7 +869,7 @@ class HomePage(QWidget):
 
         for item in self.data:
 
-            if keyword in item["content"].lower():
+            if keyword in self.talkSearchText(item).lower():
 
                 row = TalkRow(item, self)
 
@@ -686,7 +889,7 @@ class MainWindow(QWidget):
         self.setMaximumWidth(300)
 
         self.setWindowIcon(self.createAppIcon())
-        self.setWindowTitle("TalkBOX")
+        self.setWindowTitle("鑫牛金牌销售话术库")
         self.setObjectName("mainWindow")
         self.setStyleSheet("""
             #mainWindow {
