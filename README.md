@@ -2,6 +2,15 @@
 
 一个基于 PySide6 和 PySide6-Fluent-Widgets 开发的 Windows 桌面话术管理小工具。它适合客服、销售、电销等需要频繁复制和发送固定话术的场景，可以把常用话术集中管理，并通过复制或拖拽快速发送到微信等聊天窗口。
 
+## 直接下载
+
+前往 [GitHub Releases](https://github.com/Jonxinxin/TalkBOX/releases/latest) 下载最新的 Windows 64 位版本：
+
+- `TalkBOX.exe`：下载后双击运行，无需安装 Python。
+- `TalkBOX-版本号-windows-x64.zip`：包含可执行程序和使用说明，解压后运行 `TalkBOX.exe`。
+
+升级时关闭旧版，再运行新版程序即可；话术和图片仍保存在 `%APPDATA%\Talkbox\`。
+
 ## 功能特性
 
 - 话术列表管理：新增、编辑、删除常用文字话术。
@@ -9,6 +18,9 @@
 - 快速复制：点击复制按钮或双击话术卡片，即可复制完整话术。
 - 图片复制：图片话术可直接复制到剪贴板。
 - 搜索过滤：通过顶部搜索框快速筛选话术。
+- 话术分类：支持“开场”“电表”“报价”“售后”四个固定分类，可在新增、编辑或右键菜单中设置。
+- 分类筛选：点击顶部分类按钮筛选话术，并可配合关键词搜索。
+- 两行预览：较长的话术显示为两行，超出部分以省略号显示。
 - 右键菜单：右键话术可置顶、取消置顶或删除。
 - 置顶标记：置顶话术会显示醒目的“置顶”标签。
 - 置顶数量限制：最多支持 5 条置顶话术。
@@ -46,6 +58,8 @@ python main.py
 - 点击话术右侧的复制按钮复制话术。
 - 双击话术卡片也可以复制话术。
 - 右键话术卡片可以置顶、取消置顶或删除。
+- 在新增或编辑窗口中选择分类，也可以右键话术卡片选择“设置分类”。
+- 点击顶部“全部”“开场”“电表”“报价”“售后”按钮切换筛选范围。
 - 按住话术卡片并拖拽到微信输入框，可尝试直接填入话术文本。
 - 点击顶部右侧的图钉按钮，可以切换窗口是否固定在最前方。
 
@@ -70,7 +84,8 @@ python main.py
 ```json
 [
     {
-        "content": "您好，这边可以帮您办理宽带套餐"
+        "content": "您好，这边可以帮您办理宽带套餐",
+        "category": "开场"
     },
     {
         "content": "现在办理可享受限时优惠活动",
@@ -87,6 +102,7 @@ python main.py
 字段说明：
 
 - `content`：话术内容。
+- `category`：话术分类，支持 `开场`、`电表`、`报价`、`售后`；缺省或其他值按未分类处理。
 - `type`：话术类型，图片话术为 `image`；旧版文字话术可不带该字段。
 - `image`：图片相对路径。
 - `pinned`：是否置顶。
@@ -99,17 +115,21 @@ python main.py
 ├── app.ico             # 窗口图标
 ├── main.py             # 主程序
 ├── requirements.txt    # Python 依赖
+├── requirements-build.txt # 打包依赖
+├── TalkBOX.spec         # PyInstaller 打包配置，包含窗口图标
 └── README.md           # 项目说明
 ```
 
-## 打包建议
+## 打包 Windows 可执行文件
 
-如果需要发布为 Windows 可执行文件，可以使用 PyInstaller：
+在 Windows 上安装依赖，使用项目自带的 PyInstaller 配置打包：
 
 ```bash
-pip install pyinstaller
-pyinstaller -F -w --icon=app.ico main.py
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --noconfirm TalkBOX.spec
 ```
+
+可执行文件生成在 `dist/TalkBOX.exe`，已包含运行依赖和 `app.ico`，可以单独分发。
 
 打包后不需要把 `talk_data.json` 放在程序同目录。程序会自动在 `%APPDATA%\Talkbox\` 下创建和保存话术数据。
 

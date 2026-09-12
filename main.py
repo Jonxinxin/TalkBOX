@@ -1,4 +1,4 @@
-
+﻿
 import sys
 import json
 import os
@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QLabel,
     QSizePolicy,
-    QFileDialog
+    QFileDialog,
+    QPushButton
 )
 
 from PySide6.QtGui import QGuiApplication, QAction, QIcon, QDrag, QPixmap
@@ -47,6 +48,37 @@ LEGACY_DATA_FILE = Path("talk_data.json")
 APP_ICON_FILE = "app.ico"
 MAX_PINNED_TALKS = 5
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
+ALL_CATEGORIES = "全部"
+UNCATEGORIZED = "未分类"
+FIXED_CATEGORIES = ("开场", "电表", "报价", "售后")
+CATEGORY_SELECT_OPTIONS = (UNCATEGORIZED, *FIXED_CATEGORIES)
+CATEGORY_TAB_STYLE = """
+    QPushButton {
+        color: #475569;
+        background: #ffffff;
+        border: 1px solid #d7e2ef;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    QPushButton:hover {
+        color: #2563eb;
+        background: #f5f9ff;
+        border: 1px solid #9ebff3;
+    }
+
+    QPushButton:checked {
+        color: #ffffff;
+        background: #2563eb;
+        border: 1px solid #1d4ed8;
+    }
+
+    QPushButton:checked:hover {
+        background: #1d4ed8;
+        border: 1px solid #1e40af;
+    }
+"""
 
 
 def resourcePath(fileName):
@@ -102,36 +134,57 @@ class DragOverlay(QFrame):
         """)
 
 
-class EditDialog(QDialog):
+class CategoryButtonBar(QWidget):
 
-    def __init__(self, parent=None, content=""):
+    def __init__(self, options, selected=None, onChanged=None, parent=None):
         super().__init__(parent)
 
-        self.setWindowTitle("编辑话术")
-        self.resize(260, 200)
+        self.options = tuple(options)
+        self.selectedValue = selected if selected in self.options else self.options[0]
+        self.onChanged = onChanged
+        self.buttons = {}
 
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
-        self.contentEdit = QTextEdit()
-        self.contentEdit.setText(content)
+        for option in self.options:
+            button = QPushButton(option)
+            button.setCheckable(True)
+            button.setFixedSize(48, 28)
+            button.setStyleSheet(CATEGORY_TAB_STYLE)
+            button.clicked.connect(
+                lambda checked=False, value=option: self.select(value)
+            )
 
-        btnLayout = QHBoxLayout()
+            self.buttons[option] = button
+            layout.addWidget(button)
 
-        saveBtn = PrimaryPushButton("保存")
-        cancelBtn = PushButton("取消")
+        layout.addStretch()
+        self.updateButtons()
 
-        saveBtn.clicked.connect(self.accept)
-        cancelBtn.clicked.connect(self.reject)
+    def select(self, value):
 
-        btnLayout.addStretch()
-        btnLayout.addWidget(cancelBtn)
-        btnLayout.addWidget(saveBtn)
+        if value not in self.options:
+            return
 
-        layout.addWidget(self.contentEdit)
-        layout.addLayout(btnLayout)
+        self.selectedValue = value
+        self.updateButtons()
 
-    def getData(self):
-        return self.contentEdit.toPlainText()
+        if self.onChanged:
+            self.onChanged(value)
+
+    def updateButtons(self):
+
+        for value, button in self.buttons.items():
+            button.setChecked(value == self.selectedValue)
+
+    def value(self):
+
+        return self.selectedValue
+
+
+class CenteredDialog(QDialog):
 
     def showEvent(self, event):
 
@@ -153,7 +206,91 @@ class EditDialog(QDialog):
         self.move(dialogGeometry.topLeft())
 
 
+class EditDialog(CenteredDialog):
+
+    def __init__(self, parent=None, content="", category="", categories=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("编辑话术")
+        self.resize(280, 240)
+
+        layout = QVBoxLayout(self)
+
+        self.categoryBar = CategoryButtonBar(
+            categories or CATEGORY_SELECT_OPTIONS,
+            category if category else UNCATEGORIZED,
+            parent=self
+        )
+
+        self.contentEdit = QTextEdit()
+        self.contentEdit.setText(content)
+
+        btnLayout = QHBoxLayout()
+
+        saveBtn = PrimaryPushButton("保存")
+        cancelBtn = PushButton("取消")
+
+        saveBtn.clicked.connect(self.accept)
+        cancelBtn.clicked.connect(self.reject)
+
+        btnLayout.addStretch()
+        btnLayout.addWidget(cancelBtn)
+        btnLayout.addWidget(saveBtn)
+
+        layout.addWidget(self.categoryBar)
+        layout.addWidget(self.contentEdit)
+        layout.addLayout(btnLayout)
+
+    def getData(self):
+        return {
+            "content": self.contentEdit.toPlainText(),
+            "category": self.categoryBar.value()
+        }
+
+class CategoryDialog(CenteredDialog):
+
+    def __init__(self, parent=None, category=""):
+        super().__init__(parent)
+
+        self.setWindowTitle("设置分类")
+        self.resize(280, 96)
+
+        layout = QVBoxLayout(self)
+
+        self.categoryBar = CategoryButtonBar(
+            CATEGORY_SELECT_OPTIONS,
+            category if category else UNCATEGORIZED,
+            parent=self
+        )
+
+        btnLayout = QHBoxLayout()
+
+        saveBtn = PrimaryPushButton("保存")
+        cancelBtn = PushButton("取消")
+
+        saveBtn.clicked.connect(self.accept)
+        cancelBtn.clicked.connect(self.reject)
+
+        btnLayout.addStretch()
+        btnLayout.addWidget(cancelBtn)
+        btnLayout.addWidget(saveBtn)
+
+        layout.addWidget(self.categoryBar)
+        layout.addLayout(btnLayout)
+
+    def getCategory(self):
+
+        return self.categoryBar.value()
+
+
 class TalkRow(CardWidget):
+
+    ROW_HEIGHT = 72
+    META_LABEL_WIDTH = 34
+    META_LABEL_HEIGHT = 16
+    META_LABEL_TOP = 4
+    META_LABEL_LEFT = 10
+    META_LABEL_GAP = 4
 
     def __init__(self, data, parentWindow):
         super().__init__()
@@ -163,31 +300,38 @@ class TalkRow(CardWidget):
         self.dragStartPosition = None
         self.isImage = self.parentWindow.isImageTalk(self.data)
 
-        self.setFixedHeight(56)
+        self.setFixedHeight(self.ROW_HEIGHT)
 
         layout = QHBoxLayout(self)
+        isPinned = self.parentWindow.isTalkPinned(self.data)
+        category = self.parentWindow.talkCategory(self.data)
 
-        if self.parentWindow.isTalkPinned(self.data):
+        if isPinned or category:
             layout.setContentsMargins(12, 18, 10, 5)
-
-            pinLabel = QLabel("置顶", self)
-            pinLabel.setFixedSize(34, 16)
-            pinLabel.move(10, 4)
-            pinLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            pinLabel.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-            pinLabel.setStyleSheet("""
-                QLabel {
-                    color: #815200;
-                    background: #fff1c2;
-                    border: 1px solid #f4c95d;
-                    border-radius: 6px;
-                    font-size: 10px;
-                    font-weight: 600;
-                }
-            """)
-            pinLabel.raise_()
         else:
             layout.setContentsMargins(12, 7, 10, 7)
+
+        metaX = self.META_LABEL_LEFT
+
+        if isPinned:
+            self.createMetaLabel(
+                "置顶",
+                metaX,
+                "#815200",
+                "#fff1c2",
+                "#f4c95d"
+            )
+            metaX += self.META_LABEL_WIDTH + self.META_LABEL_GAP
+
+        if category:
+            self.createMetaLabel(
+                category,
+                metaX,
+                "#2563eb",
+                "#edf5ff",
+                "#bfd7ff",
+                category
+            )
 
         layout.setSpacing(8)
 
@@ -224,6 +368,14 @@ class TalkRow(CardWidget):
 
         self.textLabel = BodyLabel()
         self.textLabel.setMinimumWidth(0)
+        self.textLabel.setWordWrap(False)
+        self.textLabel.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.textLabel.setStyleSheet("""
+            QLabel {
+                color: #1e293b;
+                font-size: 13px;
+            }
+        """)
         self.textLabel.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred
@@ -273,18 +425,82 @@ class TalkRow(CardWidget):
             }
         """)
 
+    def createMetaLabel(self, text, x, color, background, border, tooltip=""):
+
+        label = QLabel(self)
+        label.setFixedSize(self.META_LABEL_WIDTH, self.META_LABEL_HEIGHT)
+        label.move(x, self.META_LABEL_TOP)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        label.setToolTip(tooltip)
+        label.setText(
+            label.fontMetrics().elidedText(
+                text,
+                Qt.TextElideMode.ElideRight,
+                self.META_LABEL_WIDTH - 6
+            )
+        )
+        label.setStyleSheet(f"""
+            QLabel {{
+                color: {color};
+                background: {background};
+                border: 1px solid {border};
+                border-radius: 6px;
+                font-size: 10px;
+                font-weight: 600;
+            }}
+        """)
+        label.raise_()
+        return label
+
     def updateElidedText(self):
 
         width = max(20, self.textLabel.width() - 2)
-        metrics = self.textLabel.fontMetrics()
+        self.textLabel.setText(self.previewText(width))
 
-        self.textLabel.setText(
-            metrics.elidedText(
-                self.fullText,
+    def previewText(self, width):
+
+        metrics = self.textLabel.fontMetrics()
+        text = self.fullText.strip()
+
+        if metrics.horizontalAdvance(text) <= width:
+            return text
+
+        firstLineLength = self.fittedTextLength(text, width, metrics)
+
+        if firstLineLength <= 0:
+            return metrics.elidedText(
+                text,
                 Qt.TextElideMode.ElideRight,
                 width
             )
-        )
+
+        firstLine = text[:firstLineLength].rstrip()
+        secondLine = text[firstLineLength:].lstrip()
+
+        return "\n".join([
+            firstLine,
+            metrics.elidedText(
+                secondLine,
+                Qt.TextElideMode.ElideRight,
+                width
+            )
+        ])
+
+    def fittedTextLength(self, text, width, metrics):
+
+        low = 0
+        high = len(text)
+
+        while low < high:
+            mid = (low + high + 1) // 2
+
+            if metrics.horizontalAdvance(text[:mid]) <= width:
+                low = mid
+            else:
+                high = mid - 1
+
+        return low
 
     def resizeEvent(self, event):
 
@@ -359,10 +575,13 @@ class TalkRow(CardWidget):
             pinAction.triggered.connect(self.pinTalk)
 
         deleteAction = QAction("删除话术", self)
+        categoryAction = QAction("设置分类", self)
 
+        categoryAction.triggered.connect(self.setTalkCategory)
         deleteAction.triggered.connect(self.deleteTalk)
 
         menu.addAction(pinAction)
+        menu.addAction(categoryAction)
         menu.addSeparator()
         menu.addAction(deleteAction)
 
@@ -420,12 +639,17 @@ class TalkRow(CardWidget):
 
         dialog = EditDialog(
             self,
-            self.data["content"]
+            self.data["content"],
+            self.parentWindow.talkCategory(self.data),
+            CATEGORY_SELECT_OPTIONS
         )
 
         if dialog.exec():
 
-            self.data["content"] = dialog.getData()
+            data = dialog.getData()
+
+            self.data["content"] = data["content"]
+            self.parentWindow.setTalkCategoryValue(self.data, data["category"])
 
             self.parentWindow.saveData()
             self.parentWindow.refreshRows()
@@ -442,6 +666,10 @@ class TalkRow(CardWidget):
 
         self.parentWindow.deleteTalk(self.data)
 
+    def setTalkCategory(self):
+
+        self.parentWindow.setTalkCategory(self.data)
+
 
 class HomePage(QWidget):
 
@@ -451,6 +679,8 @@ class HomePage(QWidget):
         self.mainWindow = mainWindow
 
         self.data = self.loadData()
+        self.rows = []
+        self.selectedCategory = ALL_CATEGORIES
 
         self.setObjectName("homePage")
         self.setStyleSheet("""
@@ -465,16 +695,19 @@ class HomePage(QWidget):
         root.setSpacing(10)
 
         topBar = GlassFrame()
-        topBar.setFixedHeight(50)
+        topBar.setFixedHeight(88)
 
-        topLayout = QHBoxLayout(topBar)
+        topLayout = QVBoxLayout(topBar)
         topLayout.setContentsMargins(9, 6, 9, 6)
-        topLayout.setSpacing(8)
+        topLayout.setSpacing(6)
+
+        actionLayout = QHBoxLayout()
+        actionLayout.setSpacing(8)
 
         self.search = SearchLineEdit()
         self.search.setPlaceholderText("搜索")
 
-        self.search.textChanged.connect(self.refreshRows)
+        self.search.textChanged.connect(self.applyFilter)
 
         addBtn = ToolButton(FIF.ADD)
         addBtn.clicked.connect(self.addTalk)
@@ -489,16 +722,28 @@ class HomePage(QWidget):
         self.pinBtn.clicked.connect(self.toggleTopMost)
         self.setupWindowPinButton()
 
-        topLayout.addWidget(self.search)
-        topLayout.addWidget(addBtn)
-        topLayout.addWidget(imageBtn)
-        topLayout.addWidget(self.pinBtn)
+        actionLayout.addWidget(self.search)
+        actionLayout.addWidget(addBtn)
+        actionLayout.addWidget(imageBtn)
+        actionLayout.addWidget(self.pinBtn)
+
+        topLayout.addLayout(actionLayout)
+        self.categoryBar = CategoryButtonBar(
+            (ALL_CATEGORIES, *FIXED_CATEGORIES),
+            self.selectedCategory,
+            self.selectCategory,
+            self
+        )
+
+        topLayout.addWidget(self.categoryBar)
 
         root.addWidget(topBar)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("""
             QScrollArea {
                 background: transparent;
@@ -579,6 +824,11 @@ class HomePage(QWidget):
         """)
         self.updateWindowPinButton()
 
+    def selectCategory(self, category):
+
+        self.selectedCategory = category
+        self.applyFilter()
+
     def updateWindowPinButton(self):
 
         checked = self.pinBtn.isChecked()
@@ -618,9 +868,9 @@ class HomePage(QWidget):
         if not DATA_FILE.exists():
 
             default = [
-                {"content": "您好，这边可以帮您办理宽带套餐"},
-                {"content": "现在办理可享受限时优惠活动"},
-                {"content": "请问您的安装地址在哪里"}
+                {"content": "您好，这边可以帮您办理宽带套餐", "category": "开场"},
+                {"content": "现在办理可享受限时优惠活动", "category": "优惠"},
+                {"content": "请问您的安装地址在哪里", "category": "信息确认"}
             ]
 
             with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -657,12 +907,37 @@ class HomePage(QWidget):
 
         return talk.get("content", "")
 
+    def talkCategory(self, talk):
+
+        category = talk.get("category", "").strip()
+
+        if category in FIXED_CATEGORIES:
+            return category
+
+        return ""
+
+    def setTalkCategoryValue(self, talk, category):
+
+        category = category.strip()
+
+        if category in FIXED_CATEGORIES:
+            talk["category"] = category
+        else:
+            talk.pop("category", None)
+
+    def currentSelectedCategory(self):
+
+        if self.selectedCategory == ALL_CATEGORIES:
+            return ""
+
+        return self.selectedCategory
+
     def talkSearchText(self, talk):
 
         if self.isImageTalk(talk):
-            return f"图片 {self.imageFilePath(talk).name}"
+            return f"图片 {self.imageFilePath(talk).name} {self.talkCategory(talk)}"
 
-        return talk.get("content", "")
+        return f"{talk.get('content', '')} {self.talkCategory(talk)}"
 
     def copyImageToLibrary(self, sourcePath):
 
@@ -694,17 +969,24 @@ class HomePage(QWidget):
 
     def addTalk(self):
 
-        dialog = EditDialog(self)
+        dialog = EditDialog(
+            self,
+            category=self.currentSelectedCategory(),
+            categories=CATEGORY_SELECT_OPTIONS
+        )
 
         if dialog.exec():
 
-            text = dialog.getData()
+            data = dialog.getData()
+            text = data["content"]
 
             if not text.strip():
                 QMessageBox.warning(self, "提示", "内容不能为空")
                 return
 
-            self.data.append({"content": text})
+            talk = {"content": text}
+            self.setTalkCategoryValue(talk, data["category"])
+            self.data.append(talk)
 
             self.saveData()
             self.refreshRows()
@@ -723,10 +1005,12 @@ class HomePage(QWidget):
         if not imagePath:
             return
 
-        self.data.append({
+        talk = {
             "type": "image",
             "image": imagePath.as_posix()
-        })
+        }
+        self.setTalkCategoryValue(talk, self.currentSelectedCategory())
+        self.data.append(talk)
 
         self.saveData()
         self.refreshRows()
@@ -773,6 +1057,22 @@ class HomePage(QWidget):
                 return index
 
         return -1
+
+    def setTalkCategory(self, talk):
+
+        dialog = CategoryDialog(
+            self,
+            self.talkCategory(talk)
+        )
+
+        if not dialog.exec():
+            return
+
+        self.setTalkCategoryValue(talk, dialog.getCategory())
+        self.saveData()
+        self.refreshRows()
+
+        self.showTip("分类已更新", "话术分类已保存")
 
     def isTalkPinned(self, talk):
 
@@ -865,17 +1165,33 @@ class HomePage(QWidget):
             if widget:
                 widget.deleteLater()
 
-        keyword = self.search.text().lower()
+        self.rows = []
 
         for item in self.data:
 
-            if keyword in self.talkSearchText(item).lower():
+            row = TalkRow(item, self)
 
-                row = TalkRow(item, self)
-
-                self.listLayout.addWidget(row)
+            self.rows.append((item, row))
+            self.listLayout.addWidget(row)
 
         self.listLayout.addStretch()
+        self.applyFilter()
+
+    def applyFilter(self):
+
+        keyword = self.search.text().lower()
+        category = self.selectedCategory
+
+        for item, row in self.rows:
+            searchMatched = keyword in self.talkSearchText(item).lower()
+            itemCategory = self.talkCategory(item)
+
+            if category == ALL_CATEGORIES:
+                categoryMatched = True
+            else:
+                categoryMatched = itemCategory == category
+
+            row.setVisible(searchMatched and categoryMatched)
 
 
 class MainWindow(QWidget):
@@ -993,3 +1309,7 @@ if __name__ == "__main__":
     window.show()
 
     sys.exit(app.exec())
+
+
+
+
