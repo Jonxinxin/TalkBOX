@@ -21,11 +21,14 @@ from PySide6.QtWidgets import (
     QLabel,
     QSizePolicy,
     QFileDialog,
-    QPushButton
+    QPushButton,
+    QListWidget,
+    QListWidgetItem,
+    QAbstractItemView
 )
 
 from PySide6.QtGui import QGuiApplication, QAction, QIcon, QDrag, QPixmap
-from PySide6.QtCore import Qt, QTimer, QMimeData, QUrl
+from PySide6.QtCore import Qt, QTimer, QMimeData, QUrl, QSize
 
 from qfluentwidgets import (
     SearchLineEdit,
@@ -44,9 +47,9 @@ from qfluentwidgets import (
 APP_DATA_DIR = Path(os.getenv("APPDATA", Path.home())) / "Talkbox"
 DATA_FILE = APP_DATA_DIR / "talk_data.json"
 IMAGE_DIR = APP_DATA_DIR / "images"
+PDF_DIR = APP_DATA_DIR / "pdfs"
 LEGACY_DATA_FILE = Path("talk_data.json")
 APP_ICON_FILE = "app.ico"
-MAX_PINNED_TALKS = 5
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 ALL_CATEGORIES = "全部"
 UNCATEGORIZED = "未分类"
@@ -203,6 +206,20 @@ class CenteredDialog(QDialog):
         dialogGeometry = self.frameGeometry()
 
         dialogGeometry.moveCenter(parentGeometry.center())
+
+        screen = parentWindow.screen()
+
+        if screen:
+            available = screen.availableGeometry()
+            dialogGeometry.moveLeft(max(
+                available.left(),
+                min(dialogGeometry.left(), available.right() - dialogGeometry.width() + 1)
+            ))
+            dialogGeometry.moveTop(max(
+                available.top(),
+                min(dialogGeometry.top(), available.bottom() - dialogGeometry.height() + 1)
+            ))
+
         self.move(dialogGeometry.topLeft())
 
 
@@ -283,6 +300,98 @@ class CategoryDialog(CenteredDialog):
         return self.categoryBar.value()
 
 
+class SortDialog(CenteredDialog):
+
+    def __init__(self, page):
+        super().__init__(page)
+
+        self.talks = list(page.data)
+        self.setWindowTitle("调整话术顺序")
+        self.resize(340, 480)
+        self.setMinimumSize(300, 340)
+
+        layout = QVBoxLayout(self)
+        hint = BodyLabel("在各组内拖动条目调整顺序，点击保存生效。\n置顶话术始终显示在普通话术前面。")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.pinnedList = self.createList()
+        self.normalList = self.createList()
+
+        for index, talk in enumerate(self.talks):
+            if page.isPdfTalk(talk):
+                text = f"PDF · {page.pdfFilePath(talk).name}"
+                icon = FIF.DOCUMENT.icon()
+            elif page.isImageTalk(talk):
+                imagePath = page.imageFilePath(talk)
+                text = f"图片 · {imagePath.name}"
+                icon = QIcon(str(imagePath))
+            else:
+                text = " ".join(talk.get("content", "").split())
+                icon = FIF.EDIT.icon()
+
+            category = page.talkCategory(talk)
+
+            if category:
+                text = f"{category} · {text}"
+
+            item = QListWidgetItem(icon, text)
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            item.setToolTip(page.talkTooltip(talk))
+            item.setSizeHint(QSize(0, 40))
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
+            target = self.pinnedList if page.isTalkPinned(talk) else self.normalList
+            target.addItem(item)
+
+        for title, listWidget in (("置顶话术", self.pinnedList), ("普通话术", self.normalList)):
+            label = BodyLabel(f"{title}（{listWidget.count()}）")
+            layout.addWidget(label)
+            layout.addWidget(listWidget, 1)
+            label.setVisible(listWidget.count() > 0)
+            listWidget.setVisible(listWidget.count() > 0)
+
+        buttons = QHBoxLayout()
+        saveBtn = PrimaryPushButton("保存")
+        cancelBtn = PushButton("取消")
+        saveBtn.clicked.connect(self.accept)
+        cancelBtn.clicked.connect(self.reject)
+        buttons.addStretch()
+        buttons.addWidget(cancelBtn)
+        buttons.addWidget(saveBtn)
+        layout.addLayout(buttons)
+
+    def createList(self):
+
+        listWidget = QListWidget(self)
+        listWidget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        listWidget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        listWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        listWidget.setTextElideMode(Qt.TextElideMode.ElideRight)
+        listWidget.setIconSize(QSize(24, 24))
+        listWidget.setMinimumHeight(70)
+        listWidget.setStyleSheet("""
+            QListWidget {
+                background: #ffffff;
+                color: #1e293b;
+                border: 1px solid #d7e2ef;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QListWidget::item { border-radius: 4px; padding: 4px; }
+            QListWidget::item:selected { background: #dbeafe; color: #1d4ed8; }
+            QListWidget::item:hover { background: #eff6ff; }
+        """)
+        return listWidget
+
+    def orderedTalks(self):
+
+        return [
+            self.talks[listWidget.item(row).data(Qt.ItemDataRole.UserRole)]
+            for listWidget in (self.pinnedList, self.normalList)
+            for row in range(listWidget.count())
+        ]
+
+
 class TalkRow(CardWidget):
 
     ROW_HEIGHT = 72
@@ -299,6 +408,7 @@ class TalkRow(CardWidget):
         self.parentWindow = parentWindow
         self.dragStartPosition = None
         self.isImage = self.parentWindow.isImageTalk(self.data)
+        self.isPdf = self.parentWindow.isPdfTalk(self.data)
 
         self.setFixedHeight(self.ROW_HEIGHT)
 
@@ -363,6 +473,22 @@ class TalkRow(CardWidget):
                         Qt.TransformationMode.SmoothTransformation
                     )
                 )
+        elif self.isPdf:
+            self.fullText = self.parentWindow.pdfFilePath(self.data).name
+
+            thumbnail = QLabel("PDF")
+            thumbnail.setFixedSize(36, 36)
+            thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            thumbnail.setStyleSheet("""
+                QLabel {
+                    color: #dc2626;
+                    background: #fef2f2;
+                    border: 1px solid #fecaca;
+                    border-radius: 6px;
+                    font-size: 10px;
+                    font-weight: 600;
+                }
+            """)
         else:
             self.fullText = data["content"].replace("\n", " ")
 
@@ -390,6 +516,10 @@ class TalkRow(CardWidget):
         editBtn.setFixedSize(30, 30)
         copyBtn.setFixedSize(30, 30)
 
+        if self.isPdf:
+            editBtn.setToolTip("替换 PDF")
+            copyBtn.setToolTip("复制 PDF 文件")
+
         editBtn.clicked.connect(self.editTalk)
         copyBtn.clicked.connect(self.copyTalk)
 
@@ -397,7 +527,7 @@ class TalkRow(CardWidget):
         self.mouseDoubleClickEvent = self.doubleCopy
 
 
-        if self.isImage:
+        if self.isImage or self.isPdf:
             layout.addWidget(thumbnail)
 
         layout.addWidget(self.textLabel, 1)
@@ -529,7 +659,7 @@ class TalkRow(CardWidget):
 
         self.startTextDrag()
 
-    def startTextDrag(self):
+    def createDragMimeData(self):
 
         mimeData = QMimeData()
 
@@ -546,8 +676,25 @@ class TalkRow(CardWidget):
 
             if not pixmap.isNull():
                 mimeData.setImageData(pixmap.toImage())
+        elif self.isPdf:
+            pdfPath = self.parentWindow.pdfFilePath(self.data)
+
+            if not pdfPath.is_file():
+                self.parentWindow.showWarning("PDF 不存在", "PDF 文件已经丢失，请重新添加或替换")
+                return None
+
+            mimeData.setUrls([QUrl.fromLocalFile(str(pdfPath))])
         else:
             mimeData.setText(self.data["content"])
+
+        return mimeData
+
+    def startTextDrag(self):
+
+        mimeData = self.createDragMimeData()
+
+        if mimeData is None:
+            return
 
         drag = QDrag(self)
         drag.setMimeData(mimeData)
@@ -576,18 +723,26 @@ class TalkRow(CardWidget):
 
         deleteAction = QAction("删除话术", self)
         categoryAction = QAction("设置分类", self)
+        sortAction = QAction("调整顺序…", self)
+        sortAction.setEnabled(len(self.parentWindow.data) > 1)
 
         categoryAction.triggered.connect(self.setTalkCategory)
         deleteAction.triggered.connect(self.deleteTalk)
+        sortAction.triggered.connect(self.parentWindow.sortTalks)
 
         menu.addAction(pinAction)
         menu.addAction(categoryAction)
+        menu.addAction(sortAction)
         menu.addSeparator()
         menu.addAction(deleteAction)
 
         menu.exec(event.globalPos())
 
     def copyTalk(self):
+
+        if self.isPdf:
+            self.copyPdfTalk()
+            return
 
         if self.isImage:
             self.copyImageTalk()
@@ -627,11 +782,25 @@ class TalkRow(CardWidget):
         )
 
 
+    def copyPdfTalk(self):
+
+        mimeData = self.createDragMimeData()
+
+        if mimeData is None:
+            return
+
+        QApplication.clipboard().setMimeData(mimeData)
+        self.parentWindow.showTip("复制成功", "PDF 文件已复制，可粘贴到聊天窗口")
+
     def doubleCopy(self, event):
 
         self.copyTalk()
 
     def editTalk(self):
+
+        if self.isPdf:
+            self.parentWindow.replacePdfTalk(self.data)
+            return
 
         if self.isImage:
             self.parentWindow.replaceImageTalk(self.data)
@@ -679,6 +848,7 @@ class HomePage(QWidget):
         self.mainWindow = mainWindow
 
         self.data = self.loadData()
+        self.data.sort(key=lambda talk: not self.isTalkPinned(talk))
         self.rows = []
         self.selectedCategory = ALL_CATEGORIES
 
@@ -717,6 +887,11 @@ class HomePage(QWidget):
         imageBtn.setToolTip("添加图片")
         imageBtn.clicked.connect(self.addImageTalk)
 
+        pdfBtn = ToolButton(FIF.DOCUMENT)
+        pdfBtn.setFixedSize(32, 32)
+        pdfBtn.setToolTip("添加 PDF")
+        pdfBtn.clicked.connect(self.addPdfTalk)
+
         self.pinBtn = ToolButton(FIF.PIN)
         self.pinBtn.setCheckable(True)
         self.pinBtn.clicked.connect(self.toggleTopMost)
@@ -725,6 +900,7 @@ class HomePage(QWidget):
         actionLayout.addWidget(self.search)
         actionLayout.addWidget(addBtn)
         actionLayout.addWidget(imageBtn)
+        actionLayout.addWidget(pdfBtn)
         actionLayout.addWidget(self.pinBtn)
 
         topLayout.addLayout(actionLayout)
@@ -764,6 +940,12 @@ class HomePage(QWidget):
         scroll.setWidget(container)
 
         root.addWidget(scroll)
+
+        self.sortBtn = PushButton("调整顺序")
+        self.sortBtn.setFixedHeight(30)
+        self.sortBtn.setToolTip("拖动调整全部话术的顺序")
+        self.sortBtn.clicked.connect(self.sortTalks)
+        root.addWidget(self.sortBtn)
 
         self.refreshRows()
 
@@ -883,12 +1065,35 @@ class HomePage(QWidget):
 
         DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=4)
+        temporaryFile = DATA_FILE.with_name(f".{DATA_FILE.name}.{uuid.uuid4().hex}.tmp")
+
+        try:
+            with open(temporaryFile, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=4)
+
+            temporaryFile.replace(DATA_FILE)
+        finally:
+            try:
+                temporaryFile.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def isImageTalk(self, talk):
 
         return talk.get("type") == "image"
+
+    def isPdfTalk(self, talk):
+
+        return talk.get("type") == "pdf"
+
+    def pdfFilePath(self, talk):
+
+        path = Path(talk.get("pdf", ""))
+
+        if path.is_absolute():
+            return path
+
+        return APP_DATA_DIR / path
 
     def imageFilePath(self, talk):
 
@@ -901,6 +1106,9 @@ class HomePage(QWidget):
         return APP_DATA_DIR / path
 
     def talkTooltip(self, talk):
+
+        if self.isPdfTalk(talk):
+            return str(self.pdfFilePath(talk))
 
         if self.isImageTalk(talk):
             return str(self.imageFilePath(talk))
@@ -933,6 +1141,9 @@ class HomePage(QWidget):
         return self.selectedCategory
 
     def talkSearchText(self, talk):
+
+        if self.isPdfTalk(talk):
+            return f"PDF {self.pdfFilePath(talk).name} {self.talkCategory(talk)}"
 
         if self.isImageTalk(talk):
             return f"图片 {self.imageFilePath(talk).name} {self.talkCategory(talk)}"
@@ -967,6 +1178,102 @@ class HomePage(QWidget):
 
         return filePath
 
+    def selectPdfFile(self):
+
+        filePath, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 PDF",
+            "",
+            "PDF 文件 (*.pdf *.PDF)"
+        )
+
+        return filePath
+
+    def copyPdfToLibrary(self, sourcePath):
+
+        source = Path(sourcePath)
+
+        if source.suffix.lower() != ".pdf":
+            self.showWarning("格式不支持", "请选择 PDF 文件")
+            return None
+
+        # 每份 PDF 使用独立目录，保留发送时的原文件名，也避免同名文件覆盖。
+        relativePath = Path("pdfs") / uuid.uuid4().hex / source.name
+        target = APP_DATA_DIR / relativePath
+
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        except OSError as error:
+            self.removePdfFile(target)
+            self.showWarning("导入失败", f"无法读取或保存 PDF：{error}")
+            return None
+
+        return relativePath
+
+    def addPdfTalk(self):
+
+        filePath = self.selectPdfFile()
+
+        if not filePath:
+            return
+
+        pdfPath = self.copyPdfToLibrary(filePath)
+
+        if not pdfPath:
+            return
+
+        talk = {"type": "pdf", "pdf": pdfPath.as_posix()}
+        self.setTalkCategoryValue(talk, self.currentSelectedCategory())
+
+        if not self.saveNewTalk(talk):
+            self.removePdfFile(self.pdfFilePath(talk))
+            return
+
+        self.showTip("新增成功", "PDF 已添加")
+
+    def replacePdfTalk(self, talk):
+
+        filePath = self.selectPdfFile()
+
+        if not filePath:
+            return
+
+        pdfPath = self.copyPdfToLibrary(filePath)
+
+        if not pdfPath:
+            return
+
+        oldPdf = talk.get("pdf", "")
+        oldPdfPath = self.pdfFilePath(talk)
+        talk["pdf"] = pdfPath.as_posix()
+
+        try:
+            self.saveData()
+        except OSError as error:
+            self.removePdfFile(self.pdfFilePath(talk))
+            talk["pdf"] = oldPdf
+            self.showWarning("保存失败", f"PDF 未替换，请重试：{error}")
+            return
+
+        self.removePdfFile(oldPdfPath)
+        self.refreshRows()
+        self.showTip("替换成功", "PDF 已更新")
+
+    def removePdfFile(self, pdfPath):
+
+        try:
+            pdfPath = Path(pdfPath).resolve()
+
+            # 只清理本软件 PDF 库中独立目录内的副本。
+            if pdfPath.parent.parent != PDF_DIR.resolve():
+                return
+
+            pdfPath.unlink(missing_ok=True)
+            pdfPath.parent.rmdir()
+        except OSError:
+            pass
+
     def addTalk(self):
 
         dialog = EditDialog(
@@ -986,12 +1293,9 @@ class HomePage(QWidget):
 
             talk = {"content": text}
             self.setTalkCategoryValue(talk, data["category"])
-            self.data.append(talk)
 
-            self.saveData()
-            self.refreshRows()
-
-            self.showTip("新增成功", "话术已添加")
+            if self.saveNewTalk(talk):
+                self.showTip("新增成功", "话术已添加")
 
     def addImageTalk(self):
 
@@ -1010,12 +1314,27 @@ class HomePage(QWidget):
             "image": imagePath.as_posix()
         }
         self.setTalkCategoryValue(talk, self.currentSelectedCategory())
-        self.data.append(talk)
 
-        self.saveData()
-        self.refreshRows()
+        if not self.saveNewTalk(talk):
+            self.removeImageFile(self.imageFilePath(talk))
+            return
 
         self.showTip("新增成功", "图片已添加")
+
+    def saveNewTalk(self, talk):
+
+        index = self.pinnedTalkCount()
+        self.data.insert(index, talk)
+
+        try:
+            self.saveData()
+        except OSError as error:
+            self.data.pop(index)
+            self.showWarning("新增失败", f"无法保存话术，请重试：{error}")
+            return False
+
+        self.refreshRows()
+        return True
 
     def replaceImageTalk(self, talk):
 
@@ -1084,47 +1403,54 @@ class HomePage(QWidget):
 
     def pinTalk(self, talk):
 
-        index = self.findTalkIndex(talk)
-
-        if index < 0:
-            return
-
-        if not self.isTalkPinned(talk):
-            if self.pinnedTalkCount() >= MAX_PINNED_TALKS:
-                self.showWarning(
-                    "置顶数量已满",
-                    f"最多只能置顶{MAX_PINNED_TALKS}条话术"
-                )
-                return
-
-            talk["pinned"] = True
-            talk["original_index"] = index
-
-        self.data.insert(0, self.data.pop(index))
-
-        self.saveData()
-        self.refreshRows()
-
-        self.showTip("置顶成功", "话术已移动到顶部")
+        if self.setTalkPinned(talk, True):
+            self.showTip("置顶成功", "话术已移动到顶部")
 
     def unpinTalk(self, talk):
 
-        index = self.findTalkIndex(talk)
+        if self.setTalkPinned(talk, False):
+            self.showTip("已取消置顶", "话术已移到普通列表最前")
 
-        if index < 0:
-            return
+    def setTalkPinned(self, talk, pinned):
 
-        originalIndex = talk.pop("original_index", len(self.data) - 1)
-        talk["pinned"] = False
+        if self.findTalkIndex(talk) < 0:
+            return False
 
-        item = self.data.pop(index)
-        targetIndex = min(originalIndex, len(self.data))
-        self.data.insert(targetIndex, item)
+        oldTalk = dict(talk)
+        talk["pinned"] = pinned
+        talk.pop("original_index", None)
+        ordered = [item for item in self.data if item is not talk]
+        targetIndex = 0 if pinned else sum(1 for item in ordered if self.isTalkPinned(item))
+        ordered.insert(targetIndex, talk)
 
-        self.saveData()
+        if not self.saveTalkOrder(ordered):
+            talk.clear()
+            talk.update(oldTalk)
+            return False
+
+        return True
+
+    def sortTalks(self):
+
+        dialog = SortDialog(self)
+
+        if dialog.exec() and self.saveTalkOrder(dialog.orderedTalks()):
+            self.showTip("排序已保存", "下次打开仍会保留这个顺序")
+
+    def saveTalkOrder(self, ordered):
+
+        previous = self.data
+        self.data = ordered
+
+        try:
+            self.saveData()
+        except OSError as error:
+            self.data = previous
+            self.showWarning("排序保存失败", f"无法保存顺序，请重试：{error}")
+            return False
+
         self.refreshRows()
-
-        self.showTip("已取消置顶", "话术已恢复普通排序")
+        return True
 
     def deleteTalk(self, talk):
 
@@ -1146,10 +1472,18 @@ class HomePage(QWidget):
 
         talk = self.data.pop(index)
 
+        try:
+            self.saveData()
+        except OSError as error:
+            self.data.insert(index, talk)
+            self.showWarning("删除失败", f"无法保存删除结果，请重试：{error}")
+            return
+
         if self.isImageTalk(talk):
             self.removeImageFile(self.imageFilePath(talk))
+        elif self.isPdfTalk(talk):
+            self.removePdfFile(self.pdfFilePath(talk))
 
-        self.saveData()
         self.refreshRows()
 
         self.showTip("删除成功", "话术已删除")
@@ -1175,6 +1509,7 @@ class HomePage(QWidget):
             self.listLayout.addWidget(row)
 
         self.listLayout.addStretch()
+        self.sortBtn.setEnabled(len(self.data) > 1)
         self.applyFilter()
 
     def applyFilter(self):
@@ -1309,7 +1644,5 @@ if __name__ == "__main__":
     window.show()
 
     sys.exit(app.exec())
-
-
 
 
