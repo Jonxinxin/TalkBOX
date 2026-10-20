@@ -1,0 +1,8 @@
+<!-- TalkBOX application icon: original artwork (no third-party icon set). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24">
+  <rect x="1.5" y="2.5" width="21" height="19" rx="5.5" fill="#2864E8"/>
+  <path d="M6.5 8.25A1.75 1.75 0 0 1 8.25 6.5h7.5a1.75 1.75 0 0 1 1.75 1.75v5.5a1.75 1.75 0 0 1-1.75 1.75h-3.6l-3.05 2.36a.6.6 0 0 1-.97-.48V15.5h-.38a1.75 1.75 0 0 1-1.75-1.75z" fill="#FFFFFF"/>
+  <circle cx="9.6" cy="10.5" r="1.05" fill="#2864E8"/>
+  <circle cx="12.6" cy="10.5" r="1.05" fill="#2864E8"/>
+  <circle cx="15.6" cy="10.5" r="1.05" fill="#2864E8"/>
+</svg>

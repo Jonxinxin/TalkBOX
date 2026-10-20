@@ -1,0 +1,43 @@
+// Windows resources: application icon and file properties shown in Explorer.
+// The version fields are injected by CMake (see CMakeLists.txt), so the exe
+// always matches the release tag.
+
+#include <windows.h>
+
+// The file is UTF-8; tell rc.exe so the Chinese description survives.
+#pragma code_page(65001)
+
+IDI_ICON1 ICON "talkbox.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION TALKBOX_FILE_VERSION
+ PRODUCTVERSION TALKBOX_FILE_VERSION
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "TalkBOX"
+            VALUE "FileDescription", "TalkBOX 话术库"
+            VALUE "FileVersion", TALKBOX_VERSION_STRING
+            VALUE "InternalName", "TalkBOX"
+            VALUE "LegalCopyright", "TalkBOX"
+            VALUE "OriginalFilename", "TalkBOX.exe"
+            VALUE "ProductName", "TalkBOX"
+            VALUE "ProductVersion", TALKBOX_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END

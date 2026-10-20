@@ -1,0 +1,14 @@
+Icons: Material Symbols (https://fonts.google.com/icons)
+Upstream: https://github.com/google/material-design-icons
+Package: @material-symbols/svg-400 (outlined, weight 400), fetched from
+         https://cdn.jsdelivr.net/npm/@material-symbols/svg-400
+
+Used here: search, add, settings, image, picture_as_pdf, grid_view, more_horiz,
+close, subject (all icons in qml/icons/ except pin-gray.svg and pin-blue.svg,
+which come from Bootstrap Icons — see bootstrap-icons.txt).
+
+License: Apache License 2.0 — see Apache-2.0.txt in this directory.
+
+Modifications: the SVG files bundled in qml/icons/ were recoloured (an explicit
+fill colour was added to each path) and their nominal size attributes were
+changed from 48x48 to 24x24. The path geometry itself is unmodified.

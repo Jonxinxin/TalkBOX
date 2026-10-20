@@ -1,0 +1,25 @@
+# Build outputs
+build/
+out/
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.user
+CMakeUserPresets.json
+
+# Misc
+*.log
+Thumbs.db
+dist/
+
+# ---------------------------------------------------------------------------
+# Business material kept local only (not part of the public source tree):
+# PRD, prototypes, prompts, dev notes and the real snippet data.
+# ---------------------------------------------------------------------------
+TalkBOX_PRD_Qt_v1.0.*
+talkbox_two_column_mockup_*.html
+talkbox_v13_preview.png
+Codex_*.md
+README_TalkBOX_Qt_*.md
