@@ -63,6 +63,9 @@ Rectangle {
     /// otherwise fire when the drop completes.
     property bool dragPerformed: false
     property point dragHotSpot: Qt.point(24, 24)
+    /// Button that started the current drag: left drags follow the settings
+    /// switch, middle drags always send the message after a successful drop.
+    property int dragButton: Qt.LeftButton
 
     /// True from the moment the platform drag starts until it finishes.
     readonly property bool dragging: bodyClick.drag.active
@@ -96,9 +99,23 @@ Rectangle {
                 || dropAction === Qt.MoveAction || dropAction === Qt.LinkAction) {
             card.dragPerformed = true
         }
+        // Only an accepted drop counts: cancelling with Esc or dropping on
+        // empty space must never press Enter in some unrelated window.
+        if (dropAction !== Qt.IgnoreAction && card.shouldSendAfterDrop())
+            SystemService.sendEnterAfterDrop()
         dragGhost.x = 0
         dragGhost.y = 0
         card.dragFinished()
+    }
+
+    /// Middle-button drags always send; left-button drags only when the
+    /// "auto send after drag" setting is enabled.
+    readonly property bool sendsOnDrop: dragButton === Qt.MiddleButton
+            || (dragButton === Qt.LeftButton && AppInfo.autoSendAfterDrag)
+
+    /// Kept as a function so tests and the drag handler use the same rule.
+    function shouldSendAfterDrop() {
+        return card.sendsOnDrop
     }
 
     readonly property string sizeText: {
@@ -166,19 +183,24 @@ Rectangle {
         id: bodyClick
         anchors.fill: parent
         hoverEnabled: true
+        // Middle-button drags are the second, always-on way to send a
+        // message: no settings switch required.
+        acceptedButtons: Qt.LeftButton | Qt.MiddleButton
         cursorShape: card.dragging ? Qt.DragCopyCursor : Qt.PointingHandCursor
         drag.target: dragGhost
         drag.threshold: 10
         onPressed: function(mouse) {
             card.dragPerformed = false
+            card.dragButton = mouse.button
             card.dragHotSpot = Qt.point(mouse.x, mouse.y)
             // Mouse interaction hands the "current card" indication back to
             // hover: the keyboard outline is only for keyboard navigation.
             if (card.listView)
                 card.listView.keyboardNavigation = false
         }
-        onClicked: {
-            if (!card.dragPerformed)
+        onClicked: function(mouse) {
+            // A middle click without moving is not a copy.
+            if (mouse.button === Qt.LeftButton && !card.dragPerformed)
                 card.activate()
         }
     }

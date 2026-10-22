@@ -17,8 +17,15 @@ Popup {
     property string pendingRestorePath: ""
     property string categoryError: ""
 
-    // Adaptive width: the app window can be a narrow side panel.
+    // Adaptive width: the app window can be a narrow side panel. The overlay
+    // is not available while the popup is being created, so the width is
+    // fitted again every time the dialog opens.
     width: Math.min(580, (Overlay.overlay ? Overlay.overlay.width : 620) - 28)
+    function fitToWindow() {
+        const overlay = Overlay.overlay
+        if (overlay && overlay.width > 0)
+            width = Math.min(580, Math.max(300, overlay.width - 28))
+    }
     modal: true
     focus: true
     // Esc or a click anywhere outside the panel dismisses it.
@@ -36,6 +43,7 @@ Popup {
     }
 
     function openDialog(sectionName) {
+        fitToWindow()
         section = sectionName || "backup"
         resultMessage = ""
         resultIsError = false
@@ -224,6 +232,12 @@ Popup {
             }
 
             SectionTab {
+                objectName: "draggingSectionTab"
+                label: qsTr("拖拽发送")
+                key: "dragging"
+            }
+
+            SectionTab {
                 objectName: "aboutSectionTab"
                 label: qsTr("关于")
                 key: "about"
@@ -241,7 +255,8 @@ Popup {
                                                     ? Overlay.overlay.height : 700) - 240)
             currentIndex: dialog.section === "backup" ? 0
                           : dialog.section === "categories" ? 1
-                          : 2
+                          : dialog.section === "dragging" ? 2
+                          : 3
 
             // ---------------- backup & restore ----------------
             ColumnLayout {
@@ -490,6 +505,127 @@ Popup {
                     color: Theme.danger
                     font.pixelSize: 12
                     wrapMode: Text.Wrap
+                }
+            }
+
+            // ---------------- drag & send ----------------
+            ColumnLayout {
+                spacing: 12
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: autoSendColumn.implicitHeight + 28
+                    radius: Theme.radiusMedium
+                    color: "#FBFCFE"
+                    border.width: 1
+                    border.color: Theme.border
+
+                    ColumnLayout {
+                        id: autoSendColumn
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 9
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+
+                                Text {
+                                    text: qsTr("左键拖拽后自动发送")
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: qsTr("开关打开后，把卡片拖到聊天窗口松手，会自动按 Enter 发送。")
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+
+                            ToggleSwitch {
+                                objectName: "autoSendSwitch"
+                                checked: AppInfo.autoSendAfterDrag
+                                onToggled: AppInfo.autoSendAfterDrag = !AppInfo.autoSendAfterDrag
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: middleDragColumn.implicitHeight + 28
+                    radius: Theme.radiusMedium
+                    color: "#FBFCFE"
+                    border.width: 1
+                    border.color: Theme.border
+
+                    ColumnLayout {
+                        id: middleDragColumn
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 6
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Text {
+                                text: qsTr("鼠标中键拖拽")
+                                color: Theme.textPrimary
+                                font.pixelSize: 13
+                                font.weight: Font.DemiBold
+                            }
+
+                            Rectangle {
+                                implicitWidth: middleBadge.implicitWidth + 14
+                                implicitHeight: 20
+                                radius: 10
+                                color: Theme.primarySoft
+                                border.width: 1
+                                border.color: Theme.primary
+
+                                Text {
+                                    id: middleBadge
+                                    anchors.centerIn: parent
+                                    text: qsTr("始终发送")
+                                    color: Theme.primary
+                                    font.pixelSize: 11
+                                }
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("按住鼠标中键（滚轮按下）拖拽卡片，松手后会自动按 Enter 发送，不需要打开上面的开关。")
+                            color: Theme.textSecondary
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("只有内容被其他程序接收后才会按 Enter；拖回本窗口、拖到空白处或按 Esc 取消都不会发送。")
+                    color: Theme.textMuted
+                    font.pixelSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                Item {
+                    Layout.fillHeight: true
                 }
             }
 

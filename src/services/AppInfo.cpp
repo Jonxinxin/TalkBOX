@@ -10,8 +10,22 @@
 
 namespace talkbox {
 
+namespace {
+
+/// UI preferences live next to the data so everything stays in one place.
+QSettings uiSettings()
+{
+    return QSettings(AppPaths::dataDir() + QStringLiteral("/ui.ini"), QSettings::IniFormat);
+}
+
+constexpr auto kAutoSendKey = "drag/autoSendAfterDrag";
+
+} // namespace
+
 AppInfo::AppInfo(QObject *parent)
     : QObject(parent)
+    , m_autoSendAfterDrag(
+          uiSettings().value(QString::fromLatin1(kAutoSendKey), false).toBool())
 {
 }
 
@@ -45,15 +59,22 @@ bool AppInfo::openLogDirectory() const
     return QDesktopServices::openUrl(QUrl::fromLocalFile(AppPaths::logsDir()));
 }
 
-namespace {
-
-/// UI preferences live next to the data so everything stays in one place.
-QSettings uiSettings()
+bool AppInfo::autoSendAfterDrag() const
 {
-    return QSettings(AppPaths::dataDir() + QStringLiteral("/ui.ini"), QSettings::IniFormat);
+    return m_autoSendAfterDrag;
 }
 
-} // namespace
+void AppInfo::setAutoSendAfterDrag(bool enabled)
+{
+    if (m_autoSendAfterDrag == enabled)
+        return;
+
+    m_autoSendAfterDrag = enabled;
+    QSettings settings = uiSettings();
+    settings.setValue(QString::fromLatin1(kAutoSendKey), enabled);
+    settings.sync();
+    emit autoSendAfterDragChanged();
+}
 
 QVariantMap AppInfo::loadWindowState() const
 {

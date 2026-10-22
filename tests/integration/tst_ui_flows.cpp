@@ -1,4 +1,4 @@
-﻿#if defined(_WIN32)
+#if defined(_WIN32)
 #  define NOMINMAX
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
@@ -31,6 +31,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSignalSpy>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -80,6 +81,8 @@ private slots:
     void rightClickOpensCardMenuWithoutCopying();
     void pdfCardBodyClickCopiesFile();
     void settingsCategoryManagementFlow();
+    void settingsDragSectionTogglesAutoSend();
+    void autoSendAfterDragSettingPersists();
     void noBuiltinCategoriesAndUncategorizedFilter();
     void clickOutsideClosesDialogs();
     void dragShowsContentFeedback();
@@ -882,6 +885,91 @@ void TestUiFlows::settingsCategoryManagementFlow()
     QTRY_VERIFY(!objectVisible(object(QStringLiteral("settingsDialog"))));
 }
 
+void TestUiFlows::autoSendAfterDragSettingPersists()
+{
+    // Off by default, persisted in ui.ini, and restored by a fresh instance.
+    QVERIFY(!m_appInfo->autoSendAfterDrag());
+    QSignalSpy changed(m_appInfo.get(), &AppInfo::autoSendAfterDragChanged);
+
+    m_appInfo->setAutoSendAfterDrag(true);
+    QCOMPARE(changed.count(), 1);
+    QVERIFY(m_appInfo->autoSendAfterDrag());
+
+    QSettings settings(AppPaths::dataDir() + QStringLiteral("/ui.ini"), QSettings::IniFormat);
+    QVERIFY(settings.value(QStringLiteral("drag/autoSendAfterDrag")).toBool());
+
+    AppInfo reloaded;
+    QVERIFY(reloaded.autoSendAfterDrag());
+
+    m_appInfo->setAutoSendAfterDrag(false);
+    QVERIFY(!m_appInfo->autoSendAfterDrag());
+    QCOMPARE(changed.count(), 2);
+}
+
+void TestUiFlows::settingsDragSectionTogglesAutoSend()
+{
+    // The new settings section exposes the left-drag switch and writes
+    // straight through to AppInfo (which persists it to ui.ini).
+    QQuickItem *settingsButton = waitForItem(QStringLiteral("settingsButton"));
+    QVERIFY(settingsButton);
+    clickItem(settingsButton);
+    QTRY_VERIFY(objectVisible(object(QStringLiteral("settingsDialog"))));
+
+    QQuickItem *draggingTab = waitForItem(QStringLiteral("draggingSectionTab"));
+    QVERIFY(draggingTab);
+    clickItem(draggingTab);
+
+    QQuickItem *toggle = waitForItem(QStringLiteral("autoSendSwitch"));
+    QVERIFY(toggle);
+    QVERIFY(!m_appInfo->autoSendAfterDrag());
+
+    // The tab switch can need one more layout pass before the dialog shrinks
+    // to the narrow panel; wait until the switch is inside the window.
+    QTRY_VERIFY(toggle->mapToScene(QPointF(toggle->width() / 2.0, 0)).x()
+                < m_window->width() - 8);
+
+    clickItem(toggle);
+    QTRY_VERIFY(m_appInfo->autoSendAfterDrag());
+    QVERIFY(toggle->property("checked").toBool());
+
+    clickItem(toggle);
+    QTRY_VERIFY(!m_appInfo->autoSendAfterDrag());
+    QVERIFY(!toggle->property("checked").toBool());
+
+    // Middle-button drags send regardless of the switch.
+    QVERIFY(m_snippetService->createTextSnippet(QStringLiteral("middle drag snippet"),
+                                                QString()));
+    nudgeSnippetGrid();
+    QQuickItem *card = waitForCard(QStringLiteral("content"),
+                                   QStringLiteral("middle drag snippet"));
+    QVERIFY2(card, "middle drag card did not appear");
+    QVariant shouldSend;
+    card->setProperty("dragButton", static_cast<int>(Qt::MiddleButton));
+    QVERIFY(QMetaObject::invokeMethod(card, "shouldSendAfterDrop",
+                                      Q_RETURN_ARG(QVariant, shouldSend)));
+    QVERIFY2(shouldSend.toBool(), "middle-button drag must always send");
+
+    card->setProperty("dragButton", static_cast<int>(Qt::LeftButton));
+    QVERIFY(QMetaObject::invokeMethod(card, "shouldSendAfterDrop",
+                                      Q_RETURN_ARG(QVariant, shouldSend)));
+    QVERIFY2(!shouldSend.toBool(), "left-button drag must not send while the switch is off");
+
+    // Remove the helper snippet again so later layout tests keep their
+    // original card count (the grid scrolls differently once it overflows).
+    QString helperId;
+    for (const Snippet &snippet : m_snippetRepository->list({})) {
+        if (snippet.content == QStringLiteral("middle drag snippet"))
+            helperId = snippet.id;
+    }
+    QVERIFY(!helperId.isEmpty());
+    QVERIFY(m_snippetService->deleteSnippet(helperId));
+
+    QQuickItem *closeButton = waitForItem(QStringLiteral("settingsCloseButton"));
+    QVERIFY(closeButton);
+    clickItem(closeButton);
+    QTRY_VERIFY(!objectVisible(object(QStringLiteral("settingsDialog"))));
+}
+
 void TestUiFlows::noBuiltinCategoriesAndUncategorizedFilter()
 {
     // No built-in categories: only the user-created ones exist, and snippets
@@ -1024,6 +1112,17 @@ void TestUiFlows::dragShowsContentFeedback()
     QVERIFY(QMetaObject::invokeMethod(card, "dragFinished", Qt::DirectConnection));
     QTRY_VERIFY(!hint->isVisible());
     QVERIFY(!m_window->property("dragHintVisible").toBool());
+
+    // A middle-button drag announces that releasing will send right away.
+    card->setProperty("dragButton", static_cast<int>(Qt::MiddleButton));
+    QVERIFY(QMetaObject::invokeMethod(card, "dragStarted", Qt::DirectConnection,
+                                      Q_ARG(QString, QStringLiteral("drag feedback snippet"))));
+    QTRY_VERIFY(hint->isVisible());
+    QCOMPARE(m_window->property("dragHintTitle").toString(),
+             QStringLiteral("松开即可发送"));
+    QVERIFY(QMetaObject::invokeMethod(card, "dragFinished", Qt::DirectConnection));
+    QTRY_VERIFY(!hint->isVisible());
+    card->setProperty("dragButton", static_cast<int>(Qt::LeftButton));
 }
 
 void TestUiFlows::typeFilterSitsAtWindowBottom()

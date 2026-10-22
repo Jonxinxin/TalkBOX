@@ -14,6 +14,11 @@ class AppInfo : public QObject
     Q_PROPERTY(QString databasePath READ databasePath CONSTANT)
     Q_PROPERTY(QString logDirectory READ logDirectory CONSTANT)
     Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
+    /// Press Enter in the target window after a successful left-button
+    /// drag-and-drop (opt-in, stored in ui.ini). Middle-button drags always
+    /// send, independently of this switch.
+    Q_PROPERTY(bool autoSendAfterDrag READ autoSendAfterDrag WRITE setAutoSendAfterDrag
+                       NOTIFY autoSendAfterDragChanged)
 
 public:
     explicit AppInfo(QObject *parent = nullptr);
@@ -23,6 +28,9 @@ public:
     QString logDirectory() const;
     QString appVersion() const;
 
+    bool autoSendAfterDrag() const;
+    void setAutoSendAfterDrag(bool enabled);
+
     Q_INVOKABLE bool openDataDirectory() const;
     Q_INVOKABLE bool openLogDirectory() const;
 
@@ -30,6 +38,12 @@ public:
     /// <dataDir>/ui.ini). Returns an empty map when nothing was saved yet.
     Q_INVOKABLE QVariantMap loadWindowState() const;
     Q_INVOKABLE void saveWindowState(int x, int y, int width, int height, bool pinned) const;
+
+signals:
+    void autoSendAfterDragChanged();
+
+private:
+    bool m_autoSendAfterDrag = false;
 };
 
 } // namespace talkbox

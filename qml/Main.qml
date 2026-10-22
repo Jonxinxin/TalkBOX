@@ -154,10 +154,13 @@ ApplicationWindow {
             toast.show(SystemService.lastError, true)
     }
 
-    function showDragHint(label, snippetType) {
-        dragHintTitle = snippetType === "text"
-                ? qsTr("松开即可把文字拖到聊天窗口")
-                : qsTr("松开即可把文件拖到聊天窗口")
+    function showDragHint(label, snippetType, sendsOnDrop) {
+        if (sendsOnDrop)
+            dragHintTitle = qsTr("松开即可发送")
+        else
+            dragHintTitle = snippetType === "text"
+                    ? qsTr("松开即可把文字拖到聊天窗口")
+                    : qsTr("松开即可把文件拖到聊天窗口")
         dragHintDetail = label
         dragHintVisible = true
     }
@@ -455,7 +458,7 @@ ApplicationWindow {
                     fileSize: model.fileSize
 
                     onDragStarted: function(label) {
-                        window.showDragHint(label, snippetType)
+                        window.showDragHint(label, snippetType, sendsOnDrop)
                     }
                     onDragFinished: window.hideDragHint()
 

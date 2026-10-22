@@ -33,6 +33,12 @@ public:
     /// be pasted into chat windows or Explorer with Ctrl+V.
     Q_INVOKABLE bool copyFileToClipboard(const QString &absolutePath);
 
+    /// Called after a drop was accepted by another application: brings the
+    /// window under the cursor to the foreground (when Windows allows it)
+    /// and presses Enter once, so chat apps send the dropped message.
+    /// Drops that land inside TalkBOX are ignored.
+    Q_INVOKABLE void sendEnterAfterDrop();
+
 signals:
     void lastErrorChanged();
 

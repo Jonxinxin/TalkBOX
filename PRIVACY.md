@@ -19,7 +19,7 @@ TalkBOX 是一个纯本地的 Windows 桌面话术库：不联网、不上传、
 | 窗口大小 / 位置 / 置顶状态 | `%LOCALAPPDATA%\TalkBOX\ui.ini` |
 | 卸载信息（仅安装版） | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{7E0F5B5C-3B1E-4F1B-9E3A-2B4C6D8E5A10}_is1` |
 
-日志只记录事件（启动、迁移、分类变更、备份/恢复结果、错误），**不记录话术正文**。
+日志只记录事件（启动、迁移、分类变更、拖拽自动发送结果、备份/恢复结果、错误），**不记录话术正文**。
 
 ## 剪贴板
 
