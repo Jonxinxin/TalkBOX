@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(TalkBOX
-    VERSION 1.1.0
+    VERSION 1.1.1
     DESCRIPTION "TalkBOX - local Windows snippet library (Qt 6)"
     LANGUAGES CXX
 )
 
-# Four-part version for the Windows resource block (1.1.0.0).
+# Four-part version for the Windows resource block (1.1.1.0).
 set(TALKBOX_FILE_VERSION ${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
 set(TALKBOX_VERSION_STRING "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
 

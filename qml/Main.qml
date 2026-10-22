@@ -42,22 +42,66 @@ ApplicationWindow {
            | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
            | Qt.WindowCloseButtonHint | (window.pinned ? Qt.WindowStaysOnTopHint : 0)
 
-    Component.onCompleted: {
+    /// Restore the saved window geometry only once the window is visible.
+    ///
+    /// The native frame keeps reporting client-area coordinates that differ
+    /// from the Win32 window rect by the frame thickness (7 x 30 px at 125%
+    /// scaling). Qt applies that offset after `window.x` / `window.y` are
+    /// assigned, so a single assignment lands the window a few pixels off.
+    /// Because that off-by-a-frame position is saved again on close, the error
+    /// accumulated on every start until the title bar sat above the screen.
+    /// Restoring while visible and re-applying the target position afterwards
+    /// makes the saved geometry come back exactly.
+    property bool pendingGeometryRestore: true
+
+    function restoreWindowGeometry() {
         const state = AppInfo.loadWindowState()
+        let targetX
+        let targetY
         if (state.width !== undefined) {
             window.width = Math.max(window.minimumWidth,
                                     Math.min(state.width, Screen.desktopAvailableWidth - 20))
             window.height = Math.max(window.minimumHeight,
                                      Math.min(state.height, Screen.desktopAvailableHeight - 20))
-            window.x = Math.max(0, Math.min(state.x, Screen.desktopAvailableWidth - window.width))
-            window.y = Math.max(0, Math.min(state.y, Screen.desktopAvailableHeight - window.height))
+            targetX = Math.max(0, Math.min(state.x, Screen.desktopAvailableWidth - window.width))
+            targetY = Math.max(0, Math.min(state.y, Screen.desktopAvailableHeight - window.height))
             window.pinned = state.pinned === true
         } else {
             // First run: dock near the right edge like a side helper panel.
-            window.x = Math.max(0, Screen.desktopAvailableWidth - window.width - 24)
-            window.y = 72
+            targetX = Math.max(0, Screen.desktopAvailableWidth - window.width - 24)
+            targetY = 72
         }
-        window.normalGeometry = Qt.rect(window.x, window.y, window.width, window.height)
+        window.x = targetX
+        window.y = targetY
+        // The frame offset is applied asynchronously by the platform, so the
+        // first assignment above can land a few pixels off. Re-apply the target
+        // once the move has settled; otherwise that offset is saved back and
+        // accumulates on every start.
+        window.correctionTarget = Qt.point(targetX, targetY)
+        geometryCorrectionTimer.restart()
+        window.normalGeometry = Qt.rect(targetX, targetY, window.width, window.height)
+    }
+
+    /// Target position of the restore currently in flight, used to correct any
+    /// platform-side offset once the window has been moved.
+    property point correctionTarget: Qt.point(0, 0)
+
+    Timer {
+        id: geometryCorrectionTimer
+        interval: 0
+        onTriggered: {
+            if (window.x !== window.correctionTarget.x)
+                window.x = window.correctionTarget.x
+            if (window.y !== window.correctionTarget.y)
+                window.y = window.correctionTarget.y
+        }
+    }
+
+    onVisibleChanged: {
+        if (window.visible && window.pendingGeometryRestore) {
+            window.pendingGeometryRestore = false
+            window.restoreWindowGeometry()
+        }
     }
 
     Timer {
