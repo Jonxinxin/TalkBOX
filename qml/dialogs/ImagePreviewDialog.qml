@@ -17,6 +17,7 @@ Popup {
     property string imageUrl: ""
     property string displayName: ""
     property string absolutePath: ""
+    property bool copyPending: false
 
     signal copied()
 
@@ -58,13 +59,28 @@ Popup {
         imageUrl = url
         displayName = name
         absolutePath = path
+        copyPending = false
         errorLabel.visible = false
         open()
         copyButton.forceActiveFocus()
     }
 
+    function completeImageCopy(success, errorMessage) {
+        if (!copyPending)
+            return
+        copyPending = false
+        if (success) {
+            errorLabel.visible = false
+            dialog.copied()
+        } else {
+            errorLabel.text = errorMessage
+            errorLabel.visible = true
+        }
+    }
+
     onClosed: {
         imageUrl = ""
+        copyPending = false
         errorLabel.visible = false
     }
 
@@ -168,14 +184,11 @@ Popup {
                 objectName: "previewCopyButton"
                 text: qsTr("复制图片")
                 variant: "primary"
+                enabled: !dialog.copyPending
                 onClicked: {
-                    if (SystemService.copyImageToClipboard(dialog.absolutePath)) {
-                        errorLabel.visible = false
-                        dialog.copied()
-                    } else {
-                        errorLabel.text = SystemService.lastError
-                        errorLabel.visible = true
-                    }
+                    dialog.copyPending = true
+                    errorLabel.visible = false
+                    SystemService.copyImageToClipboardAsync(dialog.absolutePath)
                 }
             }
 

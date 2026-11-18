@@ -84,7 +84,7 @@ Get-ChildItem (Join-Path $portable 'translations') -Filter '*.qm' -ErrorAction S
     Remove-Item -Force
 
 # A short readme next to the exe for people who unzip instead of installing.
-@"
+$readme = @"
 TalkBOX $version
 ===============
 
@@ -96,7 +96,8 @@ TalkBOX $version
 - 升级：用新版覆盖本文件夹，数据会保留。
 
 开源许可：见 LICENSES 目录。
-"@ | Set-Content -Path (Join-Path $portable '使用说明.txt') -Encoding UTF8
+"@
+$readme | Set-Content -Path (Join-Path $portable '使用说明.txt') -Encoding UTF8
 
 $zip = "dist/TalkBOX-portable-$version.zip"
 if (Test-Path $zip) { Remove-Item -Force $zip }

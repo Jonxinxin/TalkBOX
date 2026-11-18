@@ -50,6 +50,7 @@ class TestSnippetRepository : public QObject
 private slots:
     void insertsAndFindsTextSnippet();
     void listOrdersByMostRecentUpdate();
+    void reorderPersistsCustomOrder();
     void searchMatchesContentDisplayNameAndCategory();
     void filtersCombine();
     void uncategorizedFilterMatchesMissingCategory();
@@ -117,6 +118,40 @@ void TestSnippetRepository::listOrdersByMostRecentUpdate()
     all = repository.list(SnippetFilter{}, &error);
     QCOMPARE(all.size(), 2);
     QCOMPARE(all.at(0).id, first.id); // updated entry moves to the front
+}
+
+void TestSnippetRepository::reorderPersistsCustomOrder()
+{
+    testutils::TestEnv env;
+    QString error;
+    QVERIFY2(env.init(&error), qPrintable(error));
+
+    SnippetRepository repository(env.database);
+    Snippet first = makeText(QStringLiteral("第一条"), QString());
+    Snippet second = makeText(QStringLiteral("第二条"), QString());
+    Snippet third = makeText(QStringLiteral("第三条"), QString());
+    QVERIFY(repository.insert(first, &error));
+    QVERIFY(repository.insert(second, &error));
+    QVERIFY(repository.insert(third, &error));
+
+    const QList<Snippet> initial = repository.list({}, &error);
+    QCOMPARE(initial.size(), 3);
+    const QString sourceId = initial.at(2).id;
+    const QString targetId = initial.at(0).id;
+    QVERIFY2(repository.reorder(sourceId, targetId, true, &error), qPrintable(error));
+    QList<Snippet> all = repository.list({}, &error);
+    QCOMPARE(all.at(0).id, sourceId);
+    QCOMPARE(all.at(1).id, targetId);
+    QCOMPARE(all.at(2).id, initial.at(1).id);
+
+    QVERIFY2(repository.reorder(sourceId, QString(), false, &error), qPrintable(error));
+    all = repository.list({}, &error);
+    QCOMPARE(all.at(0).id, targetId);
+    QCOMPARE(all.at(1).id, initial.at(1).id);
+    QCOMPARE(all.at(2).id, sourceId);
+
+    const auto moved = repository.findById(sourceId, &error);
+    QVERIFY(moved.has_value());
 }
 
 void TestSnippetRepository::searchMatchesContentDisplayNameAndCategory()

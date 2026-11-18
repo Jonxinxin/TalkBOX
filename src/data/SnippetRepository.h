@@ -32,6 +32,11 @@ public:
 
     bool remove(const QString &id, QString *errorMessage = nullptr);
 
+    /// Moves a snippet before or after another snippet in the global list.
+    /// An empty target id appends the snippet to the end.
+    bool reorder(const QString &id, const QString &targetId, bool before,
+                 QString *errorMessage = nullptr);
+
     QList<Snippet> list(const SnippetFilter &filter, QString *errorMessage = nullptr) const;
 
     /// Number of records referencing the same managed file. Used before

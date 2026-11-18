@@ -1,4 +1,4 @@
-﻿; TalkBOX 1.0.0 — Inno Setup script
+; TalkBOX 1.1.2 - Inno Setup script
 ; Built by scripts/package.ps1; the version comes from CMakeLists.txt.
 ;
 ; Installs per-user by default (no UAC prompt): the app keeps everything in

@@ -45,6 +45,9 @@ public:
     /// Moves a snippet to another category.
     Q_INVOKABLE bool changeCategory(const QString &id, const QString &categoryId);
 
+    /// Changes the display order. An empty target id appends the snippet.
+    Q_INVOKABLE bool reorderSnippet(const QString &id, const QString &targetId, bool before);
+
     /// Deletes the snippet; the managed file is removed as well when no
     /// other record references it. Cleanup problems are reported through
     /// warningOccurred() but the record is still gone.
@@ -59,6 +62,8 @@ signals:
     void snippetCreated(const QString &id);
     void snippetCopied(const QString &id);
     void snippetDeleted(const QString &id);
+    void snippetReordered();
+    void reorderFailed(const QString &message);
     void warningOccurred(const QString &message);
     void lastErrorChanged();
 

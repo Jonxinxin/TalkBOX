@@ -109,6 +109,7 @@ private slots:
 
     // --- editing (phase B) ---
     void updateTextSnippetUpdatesContentAndCategory();
+    void reorderSnippetKeepsUpdatedAtStable();
     void updateTextSnippetRejectsEmptyAndNonText();
     void renameAttachmentKeepsManagedPath();
     void renameAttachmentValidatesName();
@@ -330,6 +331,30 @@ void TestSnippetService::updateTextSnippetUpdatesContentAndCategory()
     QVERIFY(after.has_value());
     QCOMPARE(after->content, QStringLiteral("更新后的内容")); // trimmed
     QCOMPARE(after->categoryName, QStringLiteral("电表"));
+}
+
+void TestSnippetService::reorderSnippetKeepsUpdatedAtStable()
+{
+    Setup setup;
+    QVERIFY(setup.env.init());
+
+    QVERIFY(setup.service.createTextSnippet(QStringLiteral("第一条"), QString()));
+    QVERIFY(setup.service.createTextSnippet(QStringLiteral("第二条"), QString()));
+    const QList<talkbox::Snippet> before = setup.repository.list({});
+    QCOMPARE(before.size(), 2);
+    const QString firstId = before.at(1).id;
+    const QString secondId = before.at(0).id;
+    const QString originalUpdatedAt = setup.repository.findById(firstId)->updatedAt;
+
+    QSignalSpy changed(&setup.service, &talkbox::SnippetService::snippetsChanged);
+    QVERIFY2(setup.service.reorderSnippet(firstId, secondId, true),
+             qPrintable(setup.service.lastError()));
+    QCOMPARE(changed.count(), 1);
+
+    const QList<talkbox::Snippet> after = setup.repository.list({});
+    QCOMPARE(after.at(0).id, firstId);
+    QCOMPARE(after.at(1).id, secondId);
+    QCOMPARE(setup.repository.findById(firstId)->updatedAt, originalUpdatedAt);
 }
 
 void TestSnippetService::updateTextSnippetRejectsEmptyAndNonText()

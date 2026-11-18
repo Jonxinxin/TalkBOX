@@ -2,7 +2,7 @@
 import QtQuick.Controls
 import TalkBox
 
-// Grid card for one snippet. The body click always copies the content
+// Grid card for one snippet. The body double-click copies the content
 // (text as text, images as a bitmap, PDFs as a file reference); previewing,
 // opening and management live in the card menu, which opens from the
 // right mouse button or the three-dot button (PRD 4.4/4.5, F-06).
@@ -15,21 +15,24 @@ Rectangle {
     property string content: ""
     property string previewText: ""
     property string displayName: ""
+    property string categoryId: ""
     property string categoryName: ""
     property string categoryColorKey: "slate"
     property string mimeType: ""
     property string absolutePath: ""
     property string absoluteUrl: ""
     property int fileSize: -1
+    property int modelIndex: -1
 
     signal copyRequested(string id)
     signal copyImageRequested(string id, string absolutePath)
-    signal copyFileRequested(string id, string absolutePath)
+    signal copyFileRequested(string id, string absolutePath, string displayName)
     signal previewRequested(string id, string absoluteUrl, string displayName, string absolutePath)
     signal openRequested(string id, string absolutePath)
     signal editRequested(string id, string content, string categoryId)
     signal renameRequested(string id, string displayName, string snippetType)
     signal changeCategoryRequested(string id, string categoryId)
+    signal reorderRequested(string id, string targetId, bool before)
     signal revealRequested(string absolutePath)
     signal deleteRequested(string id, string snippetType, string describe)
 
@@ -63,9 +66,21 @@ Rectangle {
     /// otherwise fire when the drop completes.
     property bool dragPerformed: false
     property point dragHotSpot: Qt.point(24, 24)
+    property string dragTransferUrl: ""
+    property string pendingDragTransferUrl: ""
+    property bool dragTransferCleanupDeferred: false
     /// Button that started the current drag: left drags follow the settings
     /// switch, middle drags always send the message after a successful drop.
     property int dragButton: Qt.LeftButton
+    property bool reorderPerformed: false
+    property bool reorderDragging: false
+    property point reorderStartPoint: Qt.point(0, 0)
+    property var reorderTarget: null
+    property bool reorderBefore: true
+
+    readonly property bool reorderSource: card.listView
+            && card.listView.reorderActive
+            && card.listView.reorderSourceCard === card
 
     /// True from the moment the platform drag starts until it finishes.
     readonly property bool dragging: bodyClick.drag.active
@@ -79,7 +94,31 @@ Rectangle {
     function dragPayload() {
         if (snippetType === "text")
             return { "text/plain": content }
-        return { "text/uri-list": absoluteUrl }
+        return { "text/uri-list": dragTransferUrl }
+    }
+
+    function prepareDragTransfer() {
+        if (!isAttachment || dragTransferUrl !== "")
+            return
+        dragTransferUrl = SystemService.prepareFileForTransfer(absolutePath, displayName)
+    }
+
+    function releaseDragTransfer() {
+        dragTransferCleanup.stop()
+        pendingDragTransferUrl = ""
+        dragTransferCleanupDeferred = false
+        if (dragTransferUrl === "")
+            return
+        SystemService.releaseFileTransfer(dragTransferUrl)
+        dragTransferUrl = ""
+    }
+
+    function deferDragTransferRelease() {
+        if (dragTransferUrl === "")
+            return
+        pendingDragTransferUrl = dragTransferUrl
+        dragTransferCleanupDeferred = true
+        dragTransferCleanup.restart()
     }
 
     // The card is the drag source (visible - Qt uses it for the drag
@@ -105,6 +144,10 @@ Rectangle {
             SystemService.sendEnterAfterDrop()
         dragGhost.x = 0
         dragGhost.y = 0
+        // Chat clients may read the dropped file asynchronously after the
+        // drag operation reports success. Keep the temporary file alive long
+        // enough for that read to finish.
+        card.deferDragTransferRelease()
         card.dragFinished()
     }
 
@@ -130,18 +173,67 @@ Rectangle {
 
     /// True while the card shows the emphasised outline: hover, keyboard
     /// position (see keyboardCurrent) or an in-progress drag.
-    readonly property bool highlighted: card.dragging || bodyClick.containsMouse
+    readonly property bool reordering: card.reorderDragging
+    readonly property bool highlighted: card.dragging || card.reordering || bodyClick.containsMouse
             || card.keyboardCurrent
+
+    readonly property point reorderOffset: {
+        var grid = card.listView
+        if (!grid || !grid.reorderActive)
+            return Qt.point(0, 0)
+
+        var sourceIndex = grid.reorderSourceIndex
+        var insertionIndex = grid.reorderInsertionIndex
+        if (sourceIndex < 0 || insertionIndex < 0)
+            return Qt.point(0, 0)
+
+        if (card.reorderSource) {
+            var sourcePosition = grid.reorderPositionForIndex(sourceIndex)
+            return Qt.point(grid.reorderPointer.x - sourcePosition.x - grid.reorderHotSpot.x,
+                            grid.reorderPointer.y - sourcePosition.y - grid.reorderHotSpot.y)
+        }
+
+        var destinationIndex = card.modelIndex
+        if (sourceIndex < insertionIndex && destinationIndex > sourceIndex
+                && destinationIndex <= insertionIndex)
+            destinationIndex -= 1
+        else if (insertionIndex < sourceIndex && destinationIndex >= insertionIndex
+                 && destinationIndex < sourceIndex)
+            destinationIndex += 1
+
+        var oldPosition = grid.reorderPositionForIndex(card.modelIndex)
+        var newPosition = grid.reorderPositionForIndex(destinationIndex)
+        return Qt.point(newPosition.x - oldPosition.x, newPosition.y - oldPosition.y)
+    }
 
     radius: Theme.radiusMedium
     color: Theme.cardBackground
     // While dragging the card lifts: a stronger outline and a slight scale
     // tell the user the gesture is being carried by this card.
-    border.width: card.dragging ? 2 : 1
-    border.color: card.dragging ? Theme.primary
+    border.width: card.dragging || card.reordering ? 2 : 1
+    border.color: card.dragging || card.reordering ? Theme.primary
             : card.highlighted ? Theme.borderStrong
             : Theme.border
-    scale: card.dragging ? 1.03 : 1.0
+    z: card.reorderSource ? 100 : 0
+    scale: card.dragging ? 1.03 : card.reorderSource ? 1.04 : 1.0
+
+    transform: Translate {
+        x: card.reorderOffset.x
+        y: card.reorderOffset.y
+
+        Behavior on x {
+            // The carried card must be synchronous with the pointer. Only
+            // the cards making room around it should animate.
+            enabled: card.listView && card.listView.reorderActive
+                    && !card.reorderSource
+            NumberAnimation { duration: 80 }
+        }
+        Behavior on y {
+            enabled: card.listView && card.listView.reorderActive
+                    && !card.reorderSource
+            NumberAnimation { duration: 80 }
+        }
+    }
 
     Behavior on border.color {
         ColorAnimation { duration: Theme.animationFast }
@@ -160,7 +252,7 @@ Rectangle {
         else if (snippetType === "image")
             card.copyImageRequested(card.snippetId, card.absolutePath)
         else
-            card.copyFileRequested(card.snippetId, card.absolutePath)
+            card.copyFileRequested(card.snippetId, card.absolutePath, card.displayName)
     }
 
     /// Menu anchor: the ⋯ button (top-right) or the right-click position.
@@ -190,18 +282,53 @@ Rectangle {
         drag.target: dragGhost
         drag.threshold: 10
         onPressed: function(mouse) {
+            dragTransferCleanup.stop()
             card.dragPerformed = false
             card.dragButton = mouse.button
             card.dragHotSpot = Qt.point(mouse.x, mouse.y)
+            card.prepareDragTransfer()
             // Mouse interaction hands the "current card" indication back to
             // hover: the keyboard outline is only for keyboard navigation.
             if (card.listView)
                 card.listView.keyboardNavigation = false
         }
         onClicked: function(mouse) {
-            // A middle click without moving is not a copy.
+            // Single clicks intentionally have no action. Keep cleanup here
+            // so a completed attachment drag does not retain its temp file.
+            if (card.dragPerformed || card.dragTransferCleanupDeferred)
+                card.deferDragTransferRelease()
+            else
+                card.releaseDragTransfer()
+        }
+        onDoubleClicked: function(mouse) {
             if (mouse.button === Qt.LeftButton && !card.dragPerformed)
                 card.activate()
+            if (card.dragTransferCleanupDeferred)
+                card.deferDragTransferRelease()
+            else
+                card.releaseDragTransfer()
+        }
+        onCanceled: function() {
+            if (card.dragPerformed || card.dragTransferCleanupDeferred)
+                card.deferDragTransferRelease()
+            else
+                card.releaseDragTransfer()
+        }
+    }
+
+    Timer {
+        id: dragTransferCleanup
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            if (pendingDragTransferUrl === ""
+                    || pendingDragTransferUrl !== dragTransferUrl)
+                return
+            var url = pendingDragTransferUrl
+            pendingDragTransferUrl = ""
+            dragTransferUrl = ""
+            dragTransferCleanupDeferred = false
+            SystemService.releaseFileTransfer(url)
         }
     }
 
@@ -377,18 +504,6 @@ Rectangle {
         }
     }
 
-    // Context click: the same menu as the ⋯ button. The body area above
-    // only accepts the left button, so right-clicking never copies or
-    // starts a drag (PRD 4.5).
-    MouseArea {
-        id: contextClick
-        anchors.fill: parent
-        acceptedButtons: Qt.RightButton
-        onClicked: function(mouse) {
-            card.openMenu(card, mouse.x, mouse.y)
-        }
-    }
-
     Menu {
         id: cardMenu
         objectName: "cardMenu"
@@ -422,7 +537,8 @@ Rectangle {
             objectName: "menuCopyFile"
             text: qsTr("复制文件")
             available: card.snippetType === "pdf"
-            onTriggered: card.copyFileRequested(card.snippetId, card.absolutePath)
+            onTriggered: card.copyFileRequested(card.snippetId, card.absolutePath,
+                                                card.displayName)
         }
 
         CardMenuItem {

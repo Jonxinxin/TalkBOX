@@ -79,6 +79,8 @@ private slots:
     void gridUsesTwoColumns();
     void cardBodyClickCopiesContent();
     void rightClickOpensCardMenuWithoutCopying();
+    void rightDragReordersCards_data();
+    void rightDragReordersCards();
     void pdfCardBodyClickCopiesFile();
     void settingsCategoryManagementFlow();
     void settingsDragSectionTogglesAutoSend();
@@ -207,6 +209,14 @@ private:
         QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, center.toPoint());
     }
 
+    void doubleClickItem(QQuickItem *target)
+    {
+        QVERIFY(target);
+        const QPointF center = target->mapToScene(
+            QPointF(target->width() / 2.0, target->height() / 2.0));
+        QTest::mouseDClick(m_window, Qt::LeftButton, Qt::NoModifier, center.toPoint());
+    }
+
     /// Drives one polish + sync pass. Qt Quick runs view refills (delegate
     /// creation) during the window's polish phase, which is normally
     /// triggered by compositor-driven frames. requestUpdate() schedules
@@ -294,6 +304,24 @@ private:
         timer.start();
         while (timer.elapsed() < timeoutMs) {
             clickItem(target);
+            QElapsedTimer attempt;
+            attempt.start();
+            while (attempt.elapsed() < 1000) {
+                if (check())
+                    return true;
+                QTest::qWait(50);
+            }
+        }
+        return false;
+    }
+
+    template<typename Check>
+    bool doubleClickUntilCopied(QQuickItem *target, Check check, int timeoutMs = 8000)
+    {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < timeoutMs) {
+            doubleClickItem(target);
             QElapsedTimer attempt;
             attempt.start();
             while (attempt.elapsed() < 1000) {
@@ -716,34 +744,43 @@ void TestUiFlows::gridUsesTwoColumns()
 
 void TestUiFlows::cardBodyClickCopiesContent()
 {
-    // Text card: a body click copies the full text right away, without
-    // opening the card menu (PRD F-06 / AT-03).
+    // Text card: a body double-click copies the full text without opening
+    // the card menu (PRD F-06 / AT-03).
     const QString textBody = QStringLiteral("点击卡片直接复制测试话术");
     QVERIFY2(m_snippetService->createTextSnippet(textBody, QString()),
              qPrintable(m_snippetService->lastError()));
     QQuickItem *textCard = waitForCard(QStringLiteral("content"), textBody);
     QVERIFY2(textCard, "text card did not appear");
 
-    setClipboardText(QStringLiteral("BODY_MARKER"));
-    QVERIFY2(clickUntilCopied(textCard, [textBody]() {
+    const bool textMarkerSet = setClipboardText(QStringLiteral("BODY_MARKER"));
+    clickItem(textCard);
+    if (textMarkerSet)
+        QCOMPARE(QGuiApplication::clipboard()->text(QClipboard::Clipboard),
+                 QStringLiteral("BODY_MARKER"));
+    QVERIFY2(doubleClickUntilCopied(textCard, [textBody]() {
                  return QGuiApplication::clipboard()->text(QClipboard::Clipboard) == textBody;
              }),
-             "body click did not copy the text");
-    QVERIFY2(items(QStringLiteral("menuCopyContent")).isEmpty(), "body click opened the menu");
+             "body double-click did not copy the text");
+    QVERIFY2(items(QStringLiteral("menuCopyContent")).isEmpty(),
+             "body double-click opened the menu");
 
-    // Image card: the body click copies the bitmap instead of opening the
+    // Image card: the body double-click copies the bitmap instead of opening the
     // in-app preview (the preview is a menu action now).
     const QString imageName = QStringLiteral("点击复制图片.png");
     QVERIFY(!createImageSnippet(imageName, QSize(36, 24)).isEmpty());
     QQuickItem *imageCard = waitForCard(QStringLiteral("displayName"), imageName);
     QVERIFY2(imageCard, "image card did not appear");
 
-    setClipboardText(QStringLiteral("IMAGE_MARKER"));
-    QVERIFY2(clickUntilCopied(imageCard, []() {
+    const bool imageMarkerSet = setClipboardText(QStringLiteral("IMAGE_MARKER"));
+    clickItem(imageCard);
+    if (imageMarkerSet)
+        QCOMPARE(QGuiApplication::clipboard()->text(QClipboard::Clipboard),
+                 QStringLiteral("IMAGE_MARKER"));
+    QVERIFY2(doubleClickUntilCopied(imageCard, []() {
                  return QGuiApplication::clipboard()->image(QClipboard::Clipboard).size()
                          == QSize(36, 24);
              }),
-             "image body click did not copy the bitmap");
+             "image body double-click did not copy the bitmap");
     QVERIFY2(!objectVisible(object(QStringLiteral("imagePreviewDialog"))),
              "body click must not open the preview dialog");
 
@@ -786,25 +823,98 @@ void TestUiFlows::rightClickOpensCardMenuWithoutCopying()
         QCOMPARE(QGuiApplication::clipboard()->text(QClipboard::Clipboard), marker);
 }
 
+void TestUiFlows::rightDragReordersCards_data()
+{
+    QTest::addColumn<int>("windowWidth");
+    QTest::addColumn<bool>("scrolled");
+    QTest::newRow("two-columns") << 760 << false;
+    QTest::newRow("three-columns") << 1000 << false;
+    QTest::newRow("two-columns-scrolled") << 760 << true;
+    QTest::newRow("three-columns-scrolled") << 1000 << true;
+}
+
+void TestUiFlows::rightDragReordersCards()
+{
+    QFETCH(int, windowWidth);
+    QFETCH(bool, scrolled);
+    const int previousWidth = m_window->width();
+    m_window->setWidth(windowWidth);
+    const QString search = QStringLiteral("右键排序手势测试");
+    const int count = scrolled ? 24 : 2;
+    for (int i = 0; i < count; ++i)
+        QVERIFY(m_snippetService->createTextSnippet(search + QString::number(i), QString()));
+
+    m_snippetsModel->setSearchQuery(search);
+    nudgeSnippetGrid();
+    auto *grid = m_window->findChild<QQuickItem *>(QStringLiteral("snippetGrid"));
+    QVERIFY(grid);
+    if (scrolled) {
+        QMetaObject::invokeMethod(grid, "positionViewAtEnd");
+        pumpRender();
+        QVERIFY(grid->property("contentY").toDouble() > 0);
+    }
+
+    SnippetFilter filter;
+    filter.searchQuery = search;
+    const QList<Snippet> before = m_snippetRepository->list(filter);
+    QCOMPARE(before.size(), count);
+    const Snippet source = before.last();
+    const Snippet target = before.at(count - 2);
+    QQuickItem *sourceCard = waitForCard(QStringLiteral("content"), source.content);
+    QQuickItem *targetCard = waitForCard(QStringLiteral("content"), target.content);
+    QVERIFY(sourceCard);
+    QVERIFY(targetCard);
+
+    const QPoint sourcePoint = sourceCard->mapToScene(
+                                      QPointF(sourceCard->width() / 2.0,
+                                              sourceCard->height() / 2.0))
+                                  .toPoint();
+    const QPoint targetPoint = targetCard->mapToScene(
+                                      QPointF(targetCard->width() / 4.0,
+                                              targetCard->height() / 2.0))
+                                  .toPoint();
+    const QPointF sourceTopLeft = sourceCard->mapToScene(QPointF(0, 0));
+    const QPointF targetTopLeft = targetCard->mapToScene(QPointF(0, 0));
+    QSignalSpy copied(m_snippetService.get(), &SnippetService::snippetCopied);
+    QTest::mousePress(m_window, Qt::RightButton, Qt::NoModifier, sourcePoint);
+    QTest::mouseMove(m_window, targetPoint, 200);
+    QVERIFY(sourceCard->property("reordering").toBool());
+    QVERIFY(sourceCard->property("z").toDouble() > 0);
+    QTRY_VERIFY(sourceCard->mapToScene(QPointF(0, 0)) != sourceTopLeft);
+    QTRY_VERIFY(targetCard->mapToScene(QPointF(0, 0)) != targetTopLeft);
+    QVERIFY(m_window->findChild<QQuickItem *>(QStringLiteral("reorderIndicator")) == nullptr);
+    QTest::mouseRelease(m_window, Qt::RightButton, Qt::NoModifier, targetPoint);
+
+    QTRY_COMPARE(m_snippetRepository->list(filter).at(count - 2).id, source.id);
+    QCOMPARE(m_snippetRepository->list(filter).last().id, target.id);
+    QCOMPARE(copied.count(), 0);
+    QVERIFY(items(QStringLiteral("menuCopyContent")).isEmpty());
+    m_snippetsModel->setSearchQuery(QString());
+    for (const Snippet &snippet : before)
+        QVERIFY(m_snippetService->deleteSnippet(snippet.id));
+    m_window->setWidth(previousWidth);
+    nudgeSnippetGrid();
+}
+
 void TestUiFlows::pdfCardBodyClickCopiesFile()
 {
     const QString pdfName = QStringLiteral("点击复制文件.pdf");
-    const QString relativePath = createPdfSnippet(pdfName);
-    QVERIFY2(!relativePath.isEmpty(), qPrintable(m_snippetService->lastError()));
+    QVERIFY2(!createPdfSnippet(pdfName).isEmpty(), qPrintable(m_snippetService->lastError()));
     QQuickItem *card = waitForCard(QStringLiteral("displayName"), pdfName);
     QVERIFY2(card, "pdf card did not appear");
 
-    setClipboardText(QStringLiteral("PDF_MARKER"));
-
-    // A body click copies the file itself (a file reference), it does not
+    // A body double-click copies the file itself (a file reference), it does not
     // open the system PDF reader.
-    const QString managedPath =
-        QDir::toNativeSeparators(m_attachmentService->absolutePath(relativePath));
-    QVERIFY2(clickUntilCopied(card, [&managedPath]() {
+    const bool pdfMarkerSet = setClipboardText(QStringLiteral("PDF_MARKER"));
+    clickItem(card);
+    if (pdfMarkerSet)
+        QCOMPARE(QGuiApplication::clipboard()->text(QClipboard::Clipboard),
+                 QStringLiteral("PDF_MARKER"));
+    QVERIFY2(doubleClickUntilCopied(card, [&pdfName]() {
                  const QStringList urls = clipboardFileUrls();
-                 return urls.size() == 1 && urls.constFirst() == managedPath;
+                 return urls.size() == 1 && QFileInfo(urls.constFirst()).fileName() == pdfName;
              }),
-             "pdf body click did not copy the file");
+             "pdf body double-click did not copy the file");
     QVERIFY(!objectVisible(object(QStringLiteral("imagePreviewDialog"))));
 
     // The menu still offers opening the PDF (and the same copy action).
@@ -1177,6 +1287,7 @@ void TestUiFlows::cardBordersNotClipped()
     nudgeSnippetGrid();
     m_window->setWidth(420);
     QTest::qWait(300);
+    nudgeSnippetGrid();
     QQuickItem *card = waitForCard(QStringLiteral("content"), QStringLiteral("边距检查话术"));
     QVERIFY(card);
     auto *gridItem = m_window->findChild<QQuickItem *>(QStringLiteral("snippetGrid"));

@@ -35,12 +35,14 @@ Popup {
     }
 
     property string originalContent: ""
+    property string originalCategoryId: ""
 
     function openFor(id, content, categoryId) {
         snippetId = id
         originalContent = content
         contentArea.text = content
         selectedCategoryId = categoryId
+        originalCategoryId = categoryId
         confirmingDiscard = false
         validationLabel.visible = false
         open()
@@ -51,6 +53,7 @@ Popup {
 
     function isDirty() {
         return contentArea.text.trim() !== originalContent.trim()
+                || selectedCategoryId !== originalCategoryId
     }
 
     /// Used by the 取消 button and Esc: asks before discarding an edit.
@@ -70,6 +73,8 @@ Popup {
         }
         if (SnippetService.updateTextSnippet(dialog.snippetId, contentArea.text,
                                              dialog.selectedCategoryId)) {
+            originalContent = contentArea.text
+            originalCategoryId = selectedCategoryId
             close()
             saved()
         } else {
@@ -81,8 +86,7 @@ Popup {
     onClosed: {
         // closePolicy (Esc / click outside) reaches here with pending input:
         // keep the dialog up and ask before discarding.
-        if (confirmingDiscard !== true
-                && contentArea.text.trim() !== originalContent.trim()) {
+        if (confirmingDiscard !== true && isDirty()) {
             confirmingDiscard = true
             open()
             return

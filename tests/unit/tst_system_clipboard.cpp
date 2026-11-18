@@ -3,11 +3,13 @@
 #include <QClipboard>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
 #include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrl>
 
 /// Exercises the real system clipboard (runs inside the interactive
 /// desktop session). Skips gracefully when no clipboard is available.
@@ -18,6 +20,7 @@ class TestSystemClipboard : public QObject
 private slots:
     void copiesImageToClipboard();
     void copiesFileToClipboard();
+    void preparedTransferKeepsDisplayName();
     void missingFileFails();
 };
 
@@ -74,13 +77,14 @@ void TestSystemClipboard::copiesFileToClipboard()
     const bool hadText = !previousText.isEmpty();
 
     talkbox::SystemService service;
+    const QString displayName = QStringLiteral("中文复制.pdf");
 
     // Windows can hold the clipboard for a while (clipboard history, other
     // applications). Retry briefly and, if it stays locked, skip instead of
     // reporting a failure that says nothing about the application.
     bool copied = false;
     for (int attempt = 0; attempt < 5 && !copied; ++attempt) {
-        copied = service.copyFileToClipboard(path);
+        copied = service.copyFileToClipboard(path, displayName);
         if (!copied)
             QTest::qWait(300);
     }
@@ -101,10 +105,31 @@ void TestSystemClipboard::copiesFileToClipboard()
             QTest::qWait(100);
     }
     QCOMPARE(urls.size(), 1);
-    QCOMPARE(urls.constFirst(), QDir::toNativeSeparators(path));
+    QCOMPARE(QFileInfo(urls.constFirst()).fileName(), displayName);
 
     if (hadText)
         clipboard->setText(previousText, QClipboard::Clipboard);
+}
+
+void TestSystemClipboard::preparedTransferKeepsDisplayName()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("uuid-file.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("%PDF-1.4\n%%EOF\n");
+    file.close();
+
+    talkbox::SystemService service;
+    const QString url = service.prepareFileForTransfer(path, QStringLiteral("中文说明书.pdf"));
+    QVERIFY2(!url.isEmpty(), qPrintable(service.lastError()));
+
+    const QString transferPath = QUrl(url).toLocalFile();
+    QVERIFY(QFileInfo::exists(transferPath));
+    QCOMPARE(QFileInfo(transferPath).fileName(), QStringLiteral("中文说明书.pdf"));
+    QVERIFY2(service.releaseFileTransfer(url), qPrintable(service.lastError()));
+    QVERIFY(!QFileInfo::exists(transferPath));
 }
 
 void TestSystemClipboard::missingFileFails()

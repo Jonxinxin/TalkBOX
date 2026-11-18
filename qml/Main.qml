@@ -173,14 +173,11 @@ ApplicationWindow {
     }
 
     function copyImage(absolutePath) {
-        if (SystemService.copyImageToClipboard(absolutePath))
-            toast.show(qsTr("图片已复制"), false)
-        else
-            toast.show(SystemService.lastError, true)
+        SystemService.copyImageToClipboardAsync(absolutePath)
     }
 
-    function copyFile(absolutePath) {
-        if (SystemService.copyFileToClipboard(absolutePath))
+    function copyFile(absolutePath, displayName) {
+        if (SystemService.copyFileToClipboard(absolutePath, displayName))
             toast.show(qsTr("文件已复制，可粘贴到聊天窗口"), false)
         else
             toast.show(SystemService.lastError, true)
@@ -224,7 +221,7 @@ ApplicationWindow {
         else if (item.type === "image")
             window.copyImage(item.absolutePath)
         else
-            window.copyFile(item.absolutePath)
+            window.copyFile(item.absolutePath, item.displayName)
     }
 
     function activateCurrentItem() {
@@ -421,6 +418,95 @@ ApplicationWindow {
                 /// current index. Mouse interaction clears it again, so the
                 /// card outline means "keyboard position", not "view focused".
                 property bool keyboardNavigation: false
+                property bool reorderActive: false
+                property int reorderSourceIndex: -1
+                property int reorderInsertionIndex: -1
+                property point reorderPointer: Qt.point(0, 0)
+                property point reorderHotSpot: Qt.point(0, 0)
+                property var reorderSourceCard: null
+                property point reorderStartPointer: Qt.point(0, 0)
+                property bool reorderPressed: false
+                property bool reorderMoved: false
+
+                function cardForIndex(itemIndex) {
+                    var candidate = itemAtIndex(itemIndex)
+                    return candidate && candidate.objectName === "snippetCard"
+                            && candidate.visible ? candidate : null
+                }
+
+                function slotIndexAt(contentPoint) {
+                    var column = Math.floor((contentPoint.x - leftMargin) / columnPitch)
+                    var row = Math.floor((contentPoint.y - topMargin) / cellHeight)
+                    if (column < 0 || column >= columns || row < 0)
+                        return -1
+                    return row * columns + column
+                }
+
+                function cardAtPointer(contentPoint) {
+                    var slotIndex = slotIndexAt(contentPoint)
+                    if (slotIndex < 0)
+                        return null
+
+                    var candidate = cardForIndex(slotIndex)
+                    if (!candidate)
+                        return null
+
+                    var position = reorderPositionForIndex(slotIndex)
+                    if (contentPoint.x < position.x
+                            || contentPoint.x > position.x + candidate.width
+                            || contentPoint.y < position.y
+                            || contentPoint.y > position.y + candidate.height)
+                        return null
+                    return candidate
+                }
+
+                function updateReorderTarget(contentPoint) {
+                    var source = reorderSourceCard
+                    if (!source)
+                        return
+
+                    reorderPointer = contentPoint
+                    var viewportPoint = contentItem.mapToItem(grid, contentPoint.x, contentPoint.y)
+                    if (viewportPoint.x < 0 || viewportPoint.x >= width
+                            || viewportPoint.y < 0 || viewportPoint.y >= height) {
+                        source.reorderTarget = null
+                        reorderInsertionIndex = source.modelIndex
+                        return
+                    }
+
+                    var slotIndex = slotIndexAt(contentPoint)
+                    var target = cardAtPointer(contentPoint)
+                    if (!target || target === source) {
+                        source.reorderTarget = null
+                        reorderInsertionIndex = source.modelIndex
+                        return
+                    }
+
+                    var targetPosition = reorderPositionForIndex(slotIndex)
+                    source.reorderBefore = columns > 1
+                            ? contentPoint.x < targetPosition.x + target.width / 2
+                            : contentPoint.y < targetPosition.y + target.height / 2
+                    var rawInsertionIndex = slotIndex + (source.reorderBefore ? 0 : 1)
+                    reorderInsertionIndex = rawInsertionIndex > source.modelIndex
+                            ? rawInsertionIndex - 1 : rawInsertionIndex
+                    source.reorderTarget = target
+                }
+
+                function clearReorderState() {
+                    if (reorderSourceCard)
+                        reorderSourceCard.reorderDragging = false
+                    reorderPressed = false
+                    reorderMoved = false
+                    reorderActive = false
+                    reorderSourceIndex = -1
+                    reorderInsertionIndex = -1
+                    reorderSourceCard = null
+                }
+
+                function reorderPositionForIndex(itemIndex) {
+                    return Qt.point(leftMargin + (itemIndex % columns) * columnPitch,
+                                    topMargin + Math.floor(itemIndex / columns) * cellHeight)
+                }
 
                 Keys.onPressed: function(event) {
                     if (event.key === Qt.Key_Up || event.key === Qt.Key_Down
@@ -494,12 +580,14 @@ ApplicationWindow {
                     content: model.content
                     previewText: model.preview
                     displayName: model.displayName
+                    categoryId: model.categoryId
                     categoryName: model.categoryName
                     categoryColorKey: model.categoryColorKey
                     mimeType: model.mimeType
                     absolutePath: model.absolutePath
                     absoluteUrl: model.absoluteUrl
                     fileSize: model.fileSize
+                    modelIndex: index
 
                     onDragStarted: function(label) {
                         window.showDragHint(label, snippetType, sendsOnDrop)
@@ -510,8 +598,8 @@ ApplicationWindow {
                     onCopyImageRequested: function(id, absolutePath) {
                         window.copyImage(absolutePath)
                     }
-                    onCopyFileRequested: function(id, absolutePath) {
-                        window.copyFile(absolutePath)
+                    onCopyFileRequested: function(id, absolutePath, displayName) {
+                        window.copyFile(absolutePath, displayName)
                     }
                     onPreviewRequested: function(id, absoluteUrl, displayName, absolutePath) {
                         imagePreviewDialog.openFor(id, absoluteUrl, displayName, absolutePath)
@@ -526,11 +614,80 @@ ApplicationWindow {
                     onChangeCategoryRequested: function(id, categoryId) {
                         changeCategoryDialog.openFor(id, categoryId)
                     }
+                    onReorderRequested: function(id, targetId, before) {
+                        SnippetService.reorderSnippet(id, targetId, before)
+                    }
                     onRevealRequested: function(absolutePath) { window.revealFile(absolutePath) }
                     onDeleteRequested: function(id, snippetType, describe) {
                         deleteDialog.openFor(id, snippetType, describe)
                     }
                 }
+            }
+
+            // Capture right-button gestures in the grid's stable coordinate
+            // system. The source card can then move visually without changing
+            // the coordinates used to track the pointer.
+            MouseArea {
+                id: reorderArea
+                anchors.fill: grid
+                z: 1000
+                acceptedButtons: Qt.RightButton
+                preventStealing: true
+                cursorShape: grid.reorderMoved ? Qt.ClosedHandCursor : Qt.ArrowCursor
+
+                onPressed: function(mouse) {
+                    var contentPoint = grid.mapToItem(grid.contentItem, mouse.x, mouse.y)
+                    var source = grid.cardAtPointer(contentPoint)
+                    grid.reorderPressed = source !== null
+                    grid.reorderMoved = false
+                    grid.reorderStartPointer = contentPoint
+                    grid.reorderSourceCard = source
+                    if (source)
+                        grid.reorderHotSpot = source.mapFromItem(grid.contentItem,
+                                                                  contentPoint.x, contentPoint.y)
+                }
+
+                onPositionChanged: function(mouse) {
+                    if (!pressed || !grid.reorderPressed || !grid.reorderSourceCard)
+                        return
+
+                    var contentPoint = grid.mapToItem(grid.contentItem, mouse.x, mouse.y)
+                    var dx = contentPoint.x - grid.reorderStartPointer.x
+                    var dy = contentPoint.y - grid.reorderStartPointer.y
+                    if (!grid.reorderMoved && Math.sqrt(dx * dx + dy * dy) >= 10) {
+                        grid.reorderMoved = true
+                        grid.reorderActive = true
+                        grid.reorderSourceIndex = grid.reorderSourceCard.modelIndex
+                        grid.reorderInsertionIndex = grid.reorderSourceIndex
+                        grid.reorderSourceCard.reorderDragging = true
+                    }
+                    if (grid.reorderMoved)
+                        grid.updateReorderTarget(contentPoint)
+                }
+
+                onReleased: function(mouse) {
+                    if (!grid.reorderPressed)
+                        return
+
+                    var source = grid.reorderSourceCard
+                    if (!grid.reorderMoved) {
+                        if (source)
+                            source.openMenu(grid, mouse.x, mouse.y)
+                        grid.clearReorderState()
+                        return
+                    }
+
+                    var contentPoint = grid.mapToItem(grid.contentItem, mouse.x, mouse.y)
+                    grid.updateReorderTarget(contentPoint)
+                    var target = source.reorderTarget
+                    var moved = target && grid.reorderInsertionIndex !== source.modelIndex
+                    var before = source.reorderBefore
+                    grid.clearReorderState()
+                    if (moved)
+                        source.reorderRequested(source.snippetId, target.snippetId, before)
+                }
+
+                onCanceled: grid.clearReorderState()
             }
 
             EmptyState {
@@ -696,7 +853,32 @@ ApplicationWindow {
     }
 
     Connections {
+        target: SystemService
+
+        function onImageCopyFinished(absolutePath, success, errorMessage) {
+            if (imagePreviewDialog.copyPending
+                    && imagePreviewDialog.absolutePath === absolutePath) {
+                imagePreviewDialog.completeImageCopy(success, errorMessage)
+                return
+            }
+
+            if (success)
+                toast.show(qsTr("图片已复制"), false)
+            else
+                toast.show(errorMessage, true)
+        }
+    }
+
+    Connections {
         target: SnippetService
+
+        function onSnippetReordered() {
+            toast.show(qsTr("顺序已更新"), false)
+        }
+
+        function onReorderFailed(message) {
+            toast.show(message, true)
+        }
 
         function onWarningOccurred(message) {
             toast.show(message, true)

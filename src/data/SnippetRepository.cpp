@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QStringList>
 #include <QUuid>
 #include <QVariant>
 
@@ -228,6 +229,85 @@ bool SnippetRepository::remove(const QString &id, QString *errorMessage)
     return true;
 }
 
+bool SnippetRepository::reorder(const QString &id, const QString &targetId, bool before,
+                                QString *errorMessage)
+{
+    const QString sourceId = id.trimmed();
+    const QString destinationId = targetId.trimmed();
+    if (sourceId.isEmpty()) {
+        if (errorMessage)
+            *errorMessage = QObject::tr("要排序的内容无效。");
+        return false;
+    }
+    QSqlDatabase db = m_database.database();
+    if (!db.transaction()) {
+        if (errorMessage)
+            *errorMessage = db.lastError().text();
+        return false;
+    }
+
+    QSqlQuery select(db);
+    if (!select.exec(QStringLiteral(
+            "SELECT id FROM snippets ORDER BY sort_order ASC, updated_at DESC, "
+            "created_at DESC, id ASC"))) {
+        if (errorMessage)
+            *errorMessage = select.lastError().text();
+        db.rollback();
+        return false;
+    }
+
+    QStringList ids;
+    while (select.next())
+        ids.append(select.value(0).toString());
+
+    const int sourceIndex = ids.indexOf(sourceId);
+    if (sourceIndex < 0) {
+        if (errorMessage)
+            *errorMessage = QObject::tr("未找到要排序的内容。");
+        db.rollback();
+        return false;
+    }
+    if (sourceId == destinationId) {
+        db.rollback();
+        return true;
+    }
+
+    ids.removeAt(sourceIndex);
+    int insertionIndex = ids.size();
+    if (!destinationId.isEmpty()) {
+        const int destinationIndex = ids.indexOf(destinationId);
+        if (destinationIndex < 0) {
+            if (errorMessage)
+                *errorMessage = QObject::tr("未找到排序目标内容。");
+            db.rollback();
+            return false;
+        }
+        insertionIndex = destinationIndex + (before ? 0 : 1);
+    }
+    ids.insert(insertionIndex, sourceId);
+
+    QSqlQuery update(db);
+    update.prepare(QStringLiteral("UPDATE snippets SET sort_order = ? WHERE id = ?"));
+    for (int index = 0; index < ids.size(); ++index) {
+        update.bindValue(0, index * 10);
+        update.bindValue(1, ids.at(index));
+        if (!update.exec()) {
+            if (errorMessage)
+                *errorMessage = QObject::tr("保存排序失败：%1").arg(update.lastError().text());
+            db.rollback();
+            return false;
+        }
+    }
+
+    if (!db.commit()) {
+        if (errorMessage)
+            *errorMessage = QObject::tr("保存排序失败：%1").arg(db.lastError().text());
+        db.rollback();
+        return false;
+    }
+    return true;
+}
+
 QList<Snippet> SnippetRepository::list(const SnippetFilter &filter, QString *errorMessage) const
 {
     QList<Snippet> result;
@@ -261,7 +341,8 @@ QList<Snippet> SnippetRepository::list(const SnippetFilter &filter, QString *err
     QString sql = QLatin1String(kSelectColumns);
     if (!conditions.isEmpty())
         sql += QLatin1String(" WHERE ") + conditions.join(QLatin1String(" AND "));
-    sql += QLatin1String(" ORDER BY s.updated_at DESC, s.created_at DESC, s.id ASC");
+    sql += QLatin1String(
+        " ORDER BY s.sort_order ASC, s.updated_at DESC, s.created_at DESC, s.id ASC");
 
     QSqlQuery query(m_database.database());
     query.prepare(sql);

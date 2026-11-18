@@ -171,6 +171,21 @@ bool SnippetService::changeCategory(const QString &id, const QString &categoryId
     return true;
 }
 
+bool SnippetService::reorderSnippet(const QString &id, const QString &targetId, bool before)
+{
+    QString error;
+    if (!m_repository.reorder(id, targetId, before, &error)) {
+        fail(error);
+        emit reorderFailed(m_lastError);
+        return false;
+    }
+
+    clearError();
+    emit snippetsChanged();
+    emit snippetReordered();
+    return true;
+}
+
 bool SnippetService::deleteSnippet(const QString &id)
 {
     QString error;
